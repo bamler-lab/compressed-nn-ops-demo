@@ -4,9 +4,7 @@ function run() {
     const fragmentShader = compileShader(gl, "fragment-shader");
     const program = createProgram(gl, vertexShader, fragmentShader);
 
-    gl.useProgram(program);
-    const srcTextureLocation = gl.getUniformLocation(program, "srcTexture");
-    console.log({ srcTextureLocation });
+    // const srcTextureLocation = gl.getUniformLocation(program, "srcTexture");
 
     const srcTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, srcTexture);
@@ -16,32 +14,41 @@ function run() {
         const srcTextureHeight = 256;
         const srcTextureWidth = 256;
         // define size and format of level 0
-        const internalFormat = gl.RGBA; // TODO: try R32UI (with format RED_INTEGER	and type UNSIGNED_BYTE)
+        const internalFormat = gl.R32UI; // TODO: try R32UI (with format RED_INTEGER and type UNSIGNED_BYTE)
         const border = 0;
-        const format = gl.RGBA;
-        const type = gl.UNSIGNED_BYTE;
-        const data = new Uint8Array(srcTextureHeight * srcTextureWidth * 4);
+        const format = gl.RED_INTEGER;
+        const type = gl.UNSIGNED_INT;
+        const data = new Uint32Array(srcTextureHeight * srcTextureWidth);
         let i = 0;
         for (let y = 0; y != srcTextureHeight; ++y) {
             for (let x = 0; x != srcTextureWidth; ++x) {
-                data[i] = 0;
-                data[i + 1] = x;
-                data[i + 2] = y;
-                data[i + 3] = 255;
-                i += 4;
+                data[i] = x + 2 * y;
+                i += 1;
+            }
+        }
+        for (let y = 10; y != 20; ++y) {
+            for (let x = 10; x != 20; ++x) {
+                data[256 * y + x] = Math.pow(2, 32) - 2;
+                i += 1;
+            }
+        }
+        for (let y = 20; y != 30; ++y) {
+            for (let x = 10; x != 20; ++x) {
+                data[256 * y + x] = Math.pow(2, 32) - 1;
+                i += 1;
             }
         }
         gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
             srcTextureWidth, srcTextureHeight, border,
             format, type, data);
 
-        // set the filtering so we don't need mips
+        // can't filter integer textures
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     }
 
-    gl.uniform1i(srcTextureLocation, 0);
+    gl.useProgram(program);
+    // gl.uniform1i(srcTextureLocation, 0);
 
     // Write the positions of vertices to a vertex shader
     var n = initVertexBuffers(gl, program);
@@ -49,10 +56,6 @@ function run() {
         console.log('Failed to set the positions of the vertices');
         return;
     }
-
-    // Clear canvas
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
 
     // Draw
     gl.drawArrays(gl.TRIANGLES, 0, n);
@@ -106,7 +109,7 @@ function initVertexBuffers(gl, program) {
  * @return {!WebGL2RenderingContext} The WebGL rendering context.
  */
 function getGl(canvasId) {
-    return document.getElementById(canvasId).getContext('webgl');
+    return document.getElementById(canvasId).getContext('webgl2');
 }
 
 /**

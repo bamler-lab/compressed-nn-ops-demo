@@ -4,34 +4,50 @@
 <head>
   <meta charset="utf-8" />
   <script src="main.js"></script>
-  <script id="vertex-shader" type="x-shader/x-vertex">
-    attribute vec4 aPosition;
-    varying vec2 pos;
+  <script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
+    in vec4 aPosition;
+    out vec2 pos;
 
     void main() {
       pos = 0.5 * aPosition.xy + 0.5;
       gl_Position = aPosition;
     }
   </script>
-  <script id="fragment-shader" type="x-shader/x-fragment">
-    precision mediump float;
-    uniform sampler2D srcTexture;
-    varying vec2 pos;
+  <script id="fragment-shader" type="x-shader/x-fragment">#version 300 es
+    precision highp float;
+    precision highp int;
+    uniform highp usampler2D srcTexture;
+
+    in vec2 pos;
+    out vec4 color;
     
     vec4 avgColumn(float x) {
-      vec4 sum = vec4(0.);
+      uint sum;
       float stepSize = 1. / 256.;
       float y = 0.;
 
       for (int i=0; i<256; ++i) {
-        sum += texture2D(srcTexture, vec2(x, y));
+        sum += texture(srcTexture, vec2(x, y)).r;
         y += stepSize;
       }
-      return stepSize * sum;
+      return vec4(float(sum) / (256. * 256. * 3.), 0., 0., 1.);
     } 
 
     void main() {
-      gl_FragColor = avgColumn(pos.x);
+      // color = avgColumn(pos.x);
+      uint val = texture(srcTexture, pos.xy).r;
+      float r = float(val) / 256.;
+      float g;
+      float b;
+      if (val == uint(4294967294)) {
+        r = 0.;
+        g = 1.;
+      }
+      if (val == uint(4294967295)) {
+        r = 0.;
+        b = 1.;
+      }
+      color = vec4(r, g, b, 1.);
     }
   </script>
   <script>
@@ -40,7 +56,7 @@
 </head>
 
 <body>
-  <canvas id="canvas"></canvas>
+  <canvas id="canvas" width="256" height="256"></canvas>
 </body>
 
 </html>
