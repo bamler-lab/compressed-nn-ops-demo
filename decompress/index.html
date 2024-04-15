@@ -17,10 +17,21 @@
     precision mediump float;
     uniform sampler2D srcTexture;
     varying vec2 pos;
+    
+    vec4 avgColumn(float x) {
+      vec4 sum = vec4(0.);
+      float stepSize = 1. / 256.;
+      float y = 0.;
+
+      for (int i=0; i<256; ++i) {
+        sum += texture2D(srcTexture, vec2(x, y));
+        y += stepSize;
+      }
+      return stepSize * sum;
+    } 
 
     void main() {
-      vec4 col = texture2D(srcTexture, pos);
-      gl_FragColor = vec4(col);
+      gl_FragColor = avgColumn(pos.x);
     }
   </script>
   <script>
