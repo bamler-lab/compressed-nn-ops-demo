@@ -15,10 +15,12 @@
   </script>
   <script id="fragment-shader" type="x-shader/x-fragment">
     precision mediump float;
+    uniform sampler2D srcTexture;
     varying vec2 pos;
 
     void main() {
-      gl_FragColor = vec4(pos.xy, 0., 1.);
+      vec4 col = texture2D(srcTexture, pos);
+      gl_FragColor = vec4(col);
     }
   </script>
   <script>

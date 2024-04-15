@@ -1,10 +1,47 @@
 function run() {
     const gl = getGl("canvas")
-    let vertexShader = compileShader(gl, "vertex-shader");
-    let fragmentShader = compileShader(gl, "fragment-shader");
-    let program = createProgram(gl, vertexShader, fragmentShader);
+    const vertexShader = compileShader(gl, "vertex-shader");
+    const fragmentShader = compileShader(gl, "fragment-shader");
+    const program = createProgram(gl, vertexShader, fragmentShader);
 
     gl.useProgram(program);
+    const srcTextureLocation = gl.getUniformLocation(program, "srcTexture");
+    console.log({ srcTextureLocation });
+
+    const srcTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, srcTexture);
+    const level = 0;
+
+    {
+        const srcTextureHeight = 256;
+        const srcTextureWidth = 256;
+        // define size and format of level 0
+        const internalFormat = gl.RGBA; // TODO: try R32UI (with format RED_INTEGER	and type UNSIGNED_BYTE)
+        const border = 0;
+        const format = gl.RGBA;
+        const type = gl.UNSIGNED_BYTE;
+        const data = new Uint8Array(srcTextureHeight * srcTextureWidth * 4);
+        let i = 0;
+        for (let y = 0; y != srcTextureHeight; ++y) {
+            for (let x = 0; x != srcTextureWidth; ++x) {
+                data[i] = 0;
+                data[i + 1] = x;
+                data[i + 2] = y;
+                data[i + 3] = 255;
+                i += 4;
+            }
+        }
+        gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
+            srcTextureWidth, srcTextureHeight, border,
+            format, type, data);
+
+        // set the filtering so we don't need mips
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); // TODO: maybe better: gl.NEAREST
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    gl.uniform1i(srcTextureLocation, 0);
 
     // Write the positions of vertices to a vertex shader
     var n = initVertexBuffers(gl, program);
@@ -66,7 +103,7 @@ function initVertexBuffers(gl, program) {
  * Obtains the GL context.
  *
  * @param {string} canvasId The id of the canvas tag.
- * @return {!WebGLRenderingContext} The WebGL rendering context.
+ * @return {!WebGL2RenderingContext} The WebGL rendering context.
  */
 function getGl(canvasId) {
     return document.getElementById(canvasId).getContext('webgl');
@@ -80,7 +117,7 @@ function getGl(canvasId) {
  * @return {!WebGLShader} The shader.
  */
 function compileShader(gl, scriptId) {
-    let shaderScript = document.getElementById(scriptId);
+    const shaderScript = document.getElementById(scriptId);
     if (!shaderScript) {
         throw "unknown script element: " + scriptId;
     }
@@ -97,7 +134,7 @@ function compileShader(gl, scriptId) {
             throw "shader type not set";
     }
 
-    let shader = gl.createShader(shaderType);
+    const shader = gl.createShader(shaderType);
     gl.shaderSource(shader, shaderScript.text);
     gl.compileShader(shader);
 
@@ -117,7 +154,7 @@ function compileShader(gl, scriptId) {
  * @return {!WebGLProgram} A program.
  */
 function createProgram(gl, vertexShader, fragmentShader) {
-    let program = gl.createProgram();
+    const program = gl.createProgram();
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
