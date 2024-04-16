@@ -16,8 +16,8 @@
   </script>
   <script id="create-lookup-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float; // mediumhp might also work, at least for indexing `lookupTable`.
-    precision highp int;
-    uniform highp usampler2D compressedData;
+    precision mediump int;
+    uniform mediump usampler2D compressedMatrix;
 
     in vec2 pos;
     out lowp uint val;
@@ -30,7 +30,7 @@
       float x = 0.;
       for (int i=0; i!=128; ++i) {
         x += doubleStepsizeX;
-        uint cdf = texture(compressedData, vec2(x, y)).r;
+        uint cdf = texture(compressedMatrix, vec2(x, y)).r;
         if (cdf > threshold) {
           val = uint(i);
           return;
@@ -38,15 +38,15 @@
       }
     }
   </script>
-  <script id="decode-shader" type="x-shader/x-fragment">#version 300 es
+  <script id="compressed-mat-vec-mul-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float; // mediumhp might also work, at least for indexing `lookupTable`.
-    precision highp int;
-    uniform highp usampler2D compressedData;
-    uniform highp usampler2D lookupTable;
-    uniform uint salt;
+    precision mediump int;
+    uniform mediump usampler2D compressedMatrix;
+    uniform lowp usampler2D lookupTable;
+    uniform mediump isampler2D vector;
 
     in vec2 pos;
-    out highp uint val;
+    out mediump int val;
 
     void main() {
       float stepsize_x = 1. / 512.; // 512 is correct
@@ -54,43 +54,53 @@
       float lookup_stepsize_y = 1. / 8.; // 512 is correct
       uint column = uint(pos.x * 512.) + uint(512) * uint(pos.y * 2.);
       vec2 offset_pos = vec2(stepsize_x * float(uint(2) * (column % uint(256))), stepsize_y * float(column / uint(256)));
-      uint offset_lo = texture(compressedData, offset_pos).r;
-      uint offset_hi = texture(compressedData, vec2(offset_pos.x + stepsize_x, offset_pos.y)).r;
+      uint offset_lo = texture(compressedMatrix, offset_pos).r;
+      uint offset_hi = texture(compressedMatrix, vec2(offset_pos.x + stepsize_x, offset_pos.y)).r;
       uint index = offset_lo | (offset_hi << 16);
       
       // Initialize decoder
       vec2 read_pos = vec2(stepsize_x * float(index & uint(511)), stepsize_y * float(index >> 9));
-      uint head = texture(compressedData, read_pos).r;
+      uint head = texture(compressedMatrix, read_pos).r;
       ++index;
       read_pos = vec2(stepsize_x * float(index & uint(511)), stepsize_y * float(index >> 9));
-      head = (head << 16) | texture(compressedData, read_pos).r;
+      head = (head << 16) | texture(compressedMatrix, read_pos).r;
       
       float model_lookup_y = 4. / 654.;
 
-      uint checksum = uint(0);
+      vec2 vector_pos = vec2(0., 0.);
+      val = int(0);
 
-      for (int i=0; i!=1024; ++i) {
-        uint quantile = head & uint(0x0fff);
-        head = head >> 12;
-        vec2 lookup_pos = vec2(stepsize_x * float(quantile & uint(511)), lookup_stepsize_y * float(quantile >> 9));
-        uint symbol_id = texture(lookupTable, lookup_pos).r;
-        float model_lookup_x = stepsize_x * float(uint(2) * symbol_id); // TODO: store floats directly in texture
-        uint left_cdf = texture(compressedData, vec2(model_lookup_x, model_lookup_y)).r;
-        model_lookup_x += stepsize_x;
-        uint symbol = texture(compressedData, vec2(model_lookup_x, model_lookup_y)).r;
-        checksum += symbol * (symbol + salt);
-        model_lookup_x += stepsize_x;
-        uint right_cdf = texture(compressedData, vec2(model_lookup_x, model_lookup_y)).r;
-        uint prob =  right_cdf - left_cdf;
-        uint remainder = quantile - left_cdf;
-        head = head * prob + remainder;
-        if ((head >> 16) == uint(0)) {
-          ++index;
-          read_pos = vec2(stepsize_x * float(index & uint(511)), stepsize_y * float(index >> 9));
-          head = (head << 16) | texture(compressedData, read_pos).r;
+      for (int j=0; j!=2; ++j) {
+        for (int i=0; i!=512; ++i) {
+          uint quantile = head & uint(0x0fff);
+          head = head >> 12;
+          vec2 lookup_pos = vec2(stepsize_x * float(quantile & uint(511)), lookup_stepsize_y * float(quantile >> 9));
+          uint symbol_id = texture(lookupTable, lookup_pos).r;
+          float model_lookup_x = stepsize_x * float(uint(2) * symbol_id); // TODO: store floats directly in texture
+          uint left_cdf = texture(compressedMatrix, vec2(model_lookup_x, model_lookup_y)).r;
+          model_lookup_x += stepsize_x;
+          uint matrix_entry_uint = texture(compressedMatrix, vec2(model_lookup_x, model_lookup_y)).r;
+          int matrix_entry = int(matrix_entry_uint) - int(0x8000);
+          // checksum += matrix_entry * (matrix_entry + salt);
+          model_lookup_x += stepsize_x;
+          uint right_cdf = texture(compressedMatrix, vec2(model_lookup_x, model_lookup_y)).r;
+          uint prob =  right_cdf - left_cdf;
+          uint remainder = quantile - left_cdf;
+          head = head * prob + remainder;
+
+          int vector_entry = texture(vector, vector_pos).r;
+          vector_pos.x += stepsize_x;
+          val += matrix_entry * vector_entry;
+
+          if ((head >> 16) == uint(0)) {
+            ++index;
+            read_pos = vec2(stepsize_x * float(index & uint(511)), stepsize_y * float(index >> 9));
+            head = (head << 16) | texture(compressedMatrix, read_pos).r;
+          }
         }
+        vector_pos = vec2(0. , 1.);
       }
-      val = checksum;
+      val = val % int(256) - 128; // Temporary hack to prevent values from exploding
     }
   </script>
   <script>
