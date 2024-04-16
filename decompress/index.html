@@ -5,6 +5,7 @@
   <meta charset="utf-8" />
   <script src="main.js"></script>
   <script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
+    precision highp float; // TODO: reduce to mediump if we can keep all indices < 256
     in vec4 aPosition;
     out vec2 pos;
 
@@ -13,41 +14,83 @@
       gl_Position = aPosition;
     }
   </script>
-  <script id="fragment-shader" type="x-shader/x-fragment">#version 300 es
-    precision highp float;
+  <script id="create-lookup-shader" type="x-shader/x-fragment">#version 300 es
+    precision highp float; // mediumhp might also work, at least for indexing `lookupTable`.
     precision highp int;
-    uniform highp usampler2D srcTexture;
+    uniform highp usampler2D compressedData;
 
     in vec2 pos;
-    out vec4 color;
-    
-    vec4 avgColumn(float x) {
-      uint sum;
-      float stepSize = 1. / 256.;
-      float y = 0.;
-
-      for (int i=0; i<256; ++i) {
-        sum += texture(srcTexture, vec2(x, y)).r;
-        y += stepSize;
-      }
-      return vec4(float(sum) / (256. * 256. * 3.), 0., 0., 1.);
-    } 
+    out lowp uint val;
 
     void main() {
-      // color = avgColumn(pos.x);
-      uint val = texture(srcTexture, pos.xy).r;
-      float r = float(val) / 256.;
-      float g;
-      float b;
-      if (val == uint(4294967294)) {
-        r = 0.;
-        g = 1.;
+      float doubleStepsizeX = 2. / 512.; // TODO: should this be 511?
+      float y = 4. / 654.;
+      
+      uint threshold = (uint(8. * pos.y) << 9) | uint(512. * pos.x);
+      float x = 0.;
+      for (int i=0; i!=128; ++i) {
+        x += doubleStepsizeX;
+        uint cdf = texture(compressedData, vec2(x, y)).r;
+        if (cdf > threshold) {
+          val = uint(i);
+          return;
+        }
       }
-      if (val == uint(4294967295)) {
-        r = 0.;
-        b = 1.;
+    }
+  </script>
+  <script id="decode-shader" type="x-shader/x-fragment">#version 300 es
+    precision highp float; // mediumhp might also work, at least for indexing `lookupTable`.
+    precision highp int;
+    uniform highp usampler2D compressedData;
+    uniform highp usampler2D lookupTable;
+    uniform uint salt;
+
+    in vec2 pos;
+    out highp uint val;
+
+    void main() {
+      float stepsize_x = 1. / 512.; // 512 is correct
+      float stepsize_y = 1. / 654.; // 654 seems correct, even though it contradicts stepsize_x
+      float lookup_stepsize_y = 1. / 8.; // 512 is correct
+      uint column = uint(pos.x * 512.) + uint(512) * uint(pos.y * 2.);
+      vec2 offset_pos = vec2(stepsize_x * float(uint(2) * (column % uint(256))), stepsize_y * float(column / uint(256)));
+      uint offset_lo = texture(compressedData, offset_pos).r;
+      uint offset_hi = texture(compressedData, vec2(offset_pos.x + stepsize_x, offset_pos.y)).r;
+      uint index = offset_lo | (offset_hi << 16);
+      
+      // Initialize decoder
+      vec2 read_pos = vec2(stepsize_x * float(index & uint(511)), stepsize_y * float(index >> 9));
+      uint head = texture(compressedData, read_pos).r;
+      ++index;
+      read_pos = vec2(stepsize_x * float(index & uint(511)), stepsize_y * float(index >> 9));
+      head = (head << 16) | texture(compressedData, read_pos).r;
+      
+      float model_lookup_y = 4. / 654.;
+
+      uint checksum = uint(0);
+
+      for (int i=0; i!=1024; ++i) {
+        uint quantile = head & uint(0x0fff);
+        head = head >> 12;
+        vec2 lookup_pos = vec2(stepsize_x * float(quantile & uint(511)), lookup_stepsize_y * float(quantile >> 9));
+        uint symbol_id = texture(lookupTable, lookup_pos).r;
+        float model_lookup_x = stepsize_x * float(uint(2) * symbol_id); // TODO: store floats directly in texture
+        uint left_cdf = texture(compressedData, vec2(model_lookup_x, model_lookup_y)).r;
+        model_lookup_x += stepsize_x;
+        uint symbol = texture(compressedData, vec2(model_lookup_x, model_lookup_y)).r;
+        checksum += symbol * (symbol + salt);
+        model_lookup_x += stepsize_x;
+        uint right_cdf = texture(compressedData, vec2(model_lookup_x, model_lookup_y)).r;
+        uint prob =  right_cdf - left_cdf;
+        uint remainder = quantile - left_cdf;
+        head = head * prob + remainder;
+        if ((head >> 16) == uint(0)) {
+          ++index;
+          read_pos = vec2(stepsize_x * float(index & uint(511)), stepsize_y * float(index >> 9));
+          head = (head << 16) | texture(compressedData, read_pos).r;
+        }
       }
-      color = vec4(r, g, b, 1.);
+      val = checksum;
     }
   </script>
   <script>
@@ -56,7 +99,7 @@
 </head>
 
 <body>
-  <canvas id="canvas" width="256" height="256"></canvas>
+  <canvas id="canvas" width="512" height="256"></canvas>
 </body>
 
 </html>

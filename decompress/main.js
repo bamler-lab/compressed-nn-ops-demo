@@ -1,115 +1,193 @@
-function run() {
-    const gl = getGl("canvas")
-    const vertexShader = compileShader(gl, "vertex-shader");
-    const fragmentShader = compileShader(gl, "fragment-shader");
-    const program = createProgram(gl, vertexShader, fragmentShader);
+async function run() {
+    const canvas = document.getElementById("canvas");
+    const gl = getGl(canvas);
+    const inputDataTexture = await createInputDataTexture(canvas, gl);
+    const lookupTableTexture = await createLookupTable(canvas, gl, inputDataTexture);
+    await decodeMatrix(canvas, gl, inputDataTexture, lookupTableTexture);
 
-    // const srcTextureLocation = gl.getUniformLocation(program, "srcTexture");
-
-    const srcTexture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, srcTexture);
-    const level = 0;
-
-    {
-        const srcTextureHeight = 256;
-        const srcTextureWidth = 256;
-        // define size and format of level 0
-        const internalFormat = gl.R32UI; // TODO: try R32UI (with format RED_INTEGER and type UNSIGNED_BYTE)
-        const border = 0;
-        const format = gl.RED_INTEGER;
-        const type = gl.UNSIGNED_INT;
-        const data = new Uint32Array(srcTextureHeight * srcTextureWidth);
-        let i = 0;
-        for (let y = 0; y != srcTextureHeight; ++y) {
-            for (let x = 0; x != srcTextureWidth; ++x) {
-                data[i] = x + 2 * y;
-                i += 1;
-            }
-        }
-        for (let y = 10; y != 20; ++y) {
-            for (let x = 10; x != 20; ++x) {
-                data[256 * y + x] = Math.pow(2, 32) - 2;
-                i += 1;
-            }
-        }
-        for (let y = 20; y != 30; ++y) {
-            for (let x = 10; x != 20; ++x) {
-                data[256 * y + x] = Math.pow(2, 32) - 1;
-                i += 1;
-            }
-        }
-        gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
-            srcTextureWidth, srcTextureHeight, border,
-            format, type, data);
-
-        // can't filter integer textures
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    }
-
-    gl.useProgram(program);
-    // gl.uniform1i(srcTextureLocation, 0);
-
-    // Write the positions of vertices to a vertex shader
-    var n = initVertexBuffers(gl, program);
-    if (n < 0) {
-        console.log('Failed to set the positions of the vertices');
-        return;
-    }
-
-    // Draw
-    gl.drawArrays(gl.TRIANGLES, 0, n);
+    // const vertexShader = compileShader(gl, "vertex-shader");
+    // const fragmentShader = compileShader(gl, "fragment-shader");
+    // const program = createProgram(gl, vertexShader, fragmentShader);
+    // gl.useProgram(program);
+    // const num_vertices = initVertexBuffers(gl, program);
+    // gl.drawArrays(gl.TRIANGLES, 0, num_vertices);
 }
 
+async function createInputDataTexture(canvas, gl) {
+    const response = fetch("mock-matrix.bin");
+    const buf = await (await response).arrayBuffer();
+    const data = new Uint16Array(buf);
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    // Upload the texture to the GPU:
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, 512, 655, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, data);
+
+    // can't filter integer textures
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    return texture;
+}
+
+async function createLookupTable(canvas, gl, inputDataTexture) {
+    // BEGIN SETUP (has to be done only once)
+    const vertexShader = compileShader(gl, "vertex-shader");
+    const fragmentShader = compileShader(gl, "create-lookup-shader");
+    const program = createProgram(gl, vertexShader, fragmentShader);
+
+    const compressedDataLocation = gl.getUniformLocation(program, "compressedData");
+    const lookupTableLocation = gl.getUniformLocation(program, "lookupTable");
+    // END SETUP
+
+    canvas.height = 8;
+    await new Promise(setTimeout)
+    gl.viewport(0, 0, 512, 8);
+
+    gl.useProgram(program);
+    // set which texture units to render with.
+    gl.uniform1i(compressedDataLocation, 0);  // texture unit 0
+    gl.uniform1i(lookupTableLocation, 1);  // texture unit 1
+
+    // Set each texture unit to use a particular texture.
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, inputDataTexture);
+    gl.activeTexture(gl.TEXTURE1);
+    const targetTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, targetTexture);
+
+    const level = 0;
+    const internalFormat = gl.R8UI;
+    const border = 0;
+    const format = gl.RED_INTEGER;
+    const type = gl.UNSIGNED_BYTE;
+    // Upload the (still empty) texture to the GPU:
+    gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
+        512, 8, border,
+        format, type, null);
+
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+
+    gl.framebufferTexture2D(
+        gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, targetTexture, level);
+
+
+    let num_vertices = initVertexBuffers(gl, program);
+    gl.drawArrays(gl.TRIANGLES, 0, num_vertices);
+
+    // let rawBuffer = new ArrayBuffer(512 * 8 * 4 * 4);
+    // let output = new Uint32Array(rawBuffer);
+    // gl.readPixels(0, 0, 512, 8, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
+    // console.log(output.filter((_val, i) => i % 4 == 0));
+
+    return targetTexture;
+};
+
+async function decodeMatrix(canvas, gl, inputDataTexture, lookupTableTexture) {
+    // BEGIN SETUP (has to be done only once)
+    const vertexShader = compileShader(gl, "vertex-shader");
+    const fragmentShader = compileShader(gl, "decode-shader");
+    const program = createProgram(gl, vertexShader, fragmentShader);
+
+    const compressedDataLocation = gl.getUniformLocation(program, "compressedData");
+    const lookupTableLocation = gl.getUniformLocation(program, "lookupTable");
+    const saltLocation = gl.getUniformLocation(program, "salt");
+    // END SETUP
+
+    canvas.height = 2;
+    await new Promise(setTimeout)
+    gl.viewport(0, 0, 512, 2);
+
+    gl.useProgram(program);
+    // set which texture units to render with.
+    gl.uniform1i(compressedDataLocation, 0);  // texture unit 0
+    gl.uniform1i(lookupTableLocation, 1);  // texture unit 1
+
+    // Upload existing textures (TODO: is this necessary again?)
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, inputDataTexture);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, lookupTableTexture);
+
+    // Bind new texture.
+    gl.activeTexture(gl.TEXTURE2);
+    const targetTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, targetTexture);
+
+    const level = 0;
+    const internalFormat = gl.R32UI;
+    const border = 0;
+    const format = gl.RED_INTEGER;
+    const type = gl.UNSIGNED_INT;
+    // Upload the (still empty) texture to the GPU:
+    gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
+        512, 2, border, format, type, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(
+        gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, targetTexture, level);
+
+    let num_vertices = initVertexBuffers(gl, program);
+
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    console.log("start");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const start = new Date();
+    for (let i = 0; i != 10000; ++i) {
+        gl.uniform1ui(saltLocation, i);
+        gl.drawArrays(gl.TRIANGLES, 0, num_vertices);
+    }
+    const end = new Date();
+    console.log("duration: " + (end - start))
+
+    let rawBuffer = new ArrayBuffer(1024 * 4 * 4);
+    let output = new Uint32Array(rawBuffer);
+    gl.readPixels(0, 0, 512, 2, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
+    console.log(output.filter((_val, i) => i % 4 == 0));
+    document.write(output.filter((_val, i) => i % 4 == 0));
+
+    return targetTexture;
+};
+
 function initVertexBuffers(gl, program) {
-    // Vertices
-    var dim = 2;
     var vertices = new Float32Array([
         -1., 1., 1., 1., 1., -1., // Triangle 1
         -1., 1., 1., -1., -1., -1. // Triangle 2 
     ]);
 
-    // Fragment color
-    var rgba = [0.0, 1, 0.0, 1.0];
-
-    // Create a buffer object
     var vertexBuffer = gl.createBuffer();
     if (!vertexBuffer) {
-        console.log('Failed to create the buffer object');
-        return -1;
+        throw 'Failed to create the buffer object';
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
 
-    // Assign the vertices in buffer object to aPosition variable
     var aPosition = gl.getAttribLocation(program, 'aPosition');
     if (aPosition < 0) {
-        console.log('Failed to get the storage location of aPosition');
-        return -1;
+        throw 'Failed to get the storage location of aPosition';
     }
-    gl.vertexAttribPointer(aPosition, dim, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
     gl.enableVertexAttribArray(aPosition);
 
-    // // Assign the color to u_FragColor variable
-    // var u_FragColor = gl.getUniformLocation(program, 'u_FragColor');
-    // if (u_FragColor < 0) {
-    //     console.log('Failed to get the storage location of u_FragColor');
-    //     return -1;
-    // }
-    // gl.uniform4fv(u_FragColor, rgba);
-
-    // Return number of vertices
-    return vertices.length / dim;
+    return vertices.length / 2; // number of vertices
 }
 
 /**
  * Obtains the GL context.
  *
- * @param {string} canvasId The id of the canvas tag.
+ * @param {canvas} HTMLCanvasElement The canvas element.
  * @return {!WebGL2RenderingContext} The WebGL rendering context.
  */
-function getGl(canvasId) {
-    return document.getElementById(canvasId).getContext('webgl2');
+function getGl(canvas) {
+    return canvas.getContext('webgl2');
 }
 
 /**
