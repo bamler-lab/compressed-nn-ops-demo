@@ -7,24 +7,23 @@ async function run() {
     const lookupTableTexture = createEmptyLookupTableTexture(gl);
     let inputVectorTexture = createVectorTexture(gl);
     let outputVectorTexture = createVectorTexture(gl);
+    let { vertexBuffer, vertices } = createVertexBuffer(gl, this.program);
 
     const framebuffer = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.framebufferTexture2D( // TODO: maybe use gl.DRAW_FRAMEBUFFER for first argument
-        gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, outputVectorTexture, 0);
 
     const createLookupTable = new GlProgram(gl, vertexShader, "create-lookup-shader", ["compressedMatrix"]);
     const compressedMatrixVectorProduct = new GlProgram(
         gl, vertexShader, "compressed-mat-vec-mul-shader", ["compressedMatrix", "lookupTable", "vector"]);
 
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     let start = performance.now();
-    for (let i = 0; i != 10_000; ++i) {
-        createLookupTable.run(gl, [compressedMatrixTexture], lookupTableTexture, 512, 8);
+    for (let i = 0; i != 1000; ++i) {
+        createLookupTable.run(gl, [compressedMatrixTexture], lookupTableTexture, 4096, 1, vertexBuffer, vertices);
         compressedMatrixVectorProduct.run(
             gl, [compressedMatrixTexture, lookupTableTexture, inputVectorTexture],
-            outputVectorTexture, 512, 2);
+            outputVectorTexture, 512, 2, vertexBuffer, vertices);
         let tmp = inputVectorTexture;
         inputVectorTexture = outputVectorTexture;
         outputVectorTexture = tmp;
@@ -39,14 +38,14 @@ async function run() {
     let end = performance.now();
     console.log('duration: ' + (end - start))
 
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     start = performance.now();
-    for (let i = 0; i != 10_000; ++i) {
-        createLookupTable.run(gl, [compressedMatrixTexture], lookupTableTexture, 512, 8);
+    for (let i = 0; i != 1000; ++i) {
+        createLookupTable.run(gl, [compressedMatrixTexture], lookupTableTexture, 4096, 1, vertexBuffer, vertices);
         compressedMatrixVectorProduct.run(
             gl, [compressedMatrixTexture, lookupTableTexture, inputVectorTexture],
-            outputVectorTexture, 512, 2);
+            outputVectorTexture, 512, 2, vertexBuffer, vertices);
         let tmp = inputVectorTexture;
         inputVectorTexture = outputVectorTexture;
         outputVectorTexture = tmp;
@@ -65,11 +64,21 @@ class GlProgram {
         const fragmentShader = compileShader(gl, fragmentShaderId);
         this.program = createProgram(gl, vertexShader, fragmentShader);
         this.textureLocations = textureNames.map(name => gl.getUniformLocation(this.program, name))
+        this.widthLocation = gl.getUniformLocation(this.program, "width");
+        this.heightLocation = gl.getUniformLocation(this.program, "height");
+        this.vertexPositionLocation = gl.getUniformLocation(this.program, "vertex_position");
     }
 
-    run(gl, textures, targetTexture, width, height) {
+    run(gl, textures, targetTexture, width, height, vertexBuffer, vertices) {
         gl.viewport(0, 0, width, height);
         gl.useProgram(this.program);
+
+        gl.uniform1i(this.widthLocation, width);
+        gl.uniform1i(this.heightLocation, height);
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        gl.vertexAttribPointer(this.vertexPositionLocation, 2, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(this.vertexPositionLocation);
 
         const gl_textures = [gl.TEXTURE0, gl.TEXTURE1, gl.TEXTURE2, gl.TEXTURE3, gl.TEXTURE4];
         for (let i = 0; i != textures.length; ++i) {
@@ -80,7 +89,6 @@ class GlProgram {
 
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, targetTexture, 0);
 
-        initVertexBuffers(gl, this.program); // TODO: is this necessary each time?
         gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
 }
@@ -90,7 +98,7 @@ function createEmptyLookupTableTexture(gl) {
     gl.bindTexture(gl.TEXTURE_2D, texture);
 
     // Upload the (still empty) texture to the GPU:
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, 512, 8, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, 4096, 1, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null);
 
     // can't filter integer textures
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
@@ -131,27 +139,13 @@ function createVectorTexture(gl) {
     return texture;
 }
 
-function initVertexBuffers(gl, program) {
-    var vertices = new Float32Array([
+function createVertexBuffer(gl) {
+    let vertices = new Float32Array([
         -1., 1., 1., 1., 1., -1., // Triangle 1
         -1., 1., 1., -1., -1., -1. // Triangle 2 
     ]);
-
-    var vertexBuffer = gl.createBuffer();
-    if (!vertexBuffer) {
-        throw 'Failed to create the buffer object';
-    }
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-
-    var aPosition = gl.getAttribLocation(program, 'aPosition');
-    if (aPosition < 0) {
-        throw 'Failed to get the storage location of aPosition';
-    }
-    gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
-    gl.enableVertexAttribArray(aPosition);
-
-    return vertices.length / 2; // number of vertices
+    let vertexBuffer = gl.createBuffer();
+    return { vertices, vertexBuffer };
 }
 
 /**
