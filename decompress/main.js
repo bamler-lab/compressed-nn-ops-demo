@@ -3,11 +3,70 @@ async function run() {
     const gl = getGl(canvas);
     const vertexShader = compileShader(gl, "vertex-shader");
 
+    const offsetTexture = createOffsetTexture(gl);
+    const partpartsumsTexture = createEmptySumsTexture(gl, 1024, 1024);
+    const partsumsTexture = createEmptySumsTexture(gl, 128, 1024);
+    const rowsumsTexture = createEmptySumsTexture(gl, 32, 1024);
+    const sumsumspartTexture = createEmptySumsTexture(gl, 1, 1024);
+    const sumsumsTexture = createEmptySumsTexture(gl, 1, 32);
+
+    let { vertexBuffer: vertexBuffer1, vertices: vertices1 } = createVertexBuffer(gl);
+    const framebuffer1 = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer1);
+
+    const createPartpartsums = new GlProgram(gl, vertexShader, "partpartsum-shader", ["input_data"]);
+    const createPartsums = new GlProgram(gl, vertexShader, "partsum-shader", ["input_data"]);
+    const createRowsums = new GlProgram(gl, vertexShader, "rowsum-shader", ["input_data"]);
+    const createSumsumspart = new GlProgram(gl, vertexShader, "sumsumpart-shader", ["input_data"]);
+    const createSumsums = new GlProgram(gl, vertexShader, "sumsum-shader", ["input_data"]);
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    let start1 = performance.now();
+    for (let i = 0; i != 1000; ++i) {
+        createPartpartsums.run(gl, [offsetTexture], partpartsumsTexture, 1024, 1024, vertexBuffer1, vertices1);
+        createPartsums.run(gl, [partpartsumsTexture], partsumsTexture, 128, 1024, vertexBuffer1, vertices1);
+        createRowsums.run(gl, [partsumsTexture], rowsumsTexture, 32, 1024, vertexBuffer1, vertices1);
+        createSumsumspart.run(gl, [rowsumsTexture], sumsumspartTexture, 1, 1024, vertexBuffer1, vertices1);
+        createSumsums.run(gl, [sumsumspartTexture], sumsumsTexture, 1, 32, vertexBuffer1, vertices1);
+    }
+
+    rawBuffer1 = new ArrayBuffer(32 * 1 * 4 * 4);
+    output1 = new Uint32Array(rawBuffer1);
+    gl.readPixels(0, 0, 1, 32, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output1);
+    console.log(output1.filter((_val, i) => i % 4 == 0));
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+    let end1 = performance.now();
+    console.log('duration: ' + (end1 - start1))
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    start1 = performance.now();
+    for (let i = 0; i != 1000; ++i) {
+        createPartpartsums.run(gl, [offsetTexture], partpartsumsTexture, 1024, 1024, vertexBuffer1, vertices1);
+        createPartsums.run(gl, [partpartsumsTexture], partsumsTexture, 128, 1024, vertexBuffer1, vertices1);
+        createRowsums.run(gl, [partsumsTexture], rowsumsTexture, 32, 1024, vertexBuffer1, vertices1);
+        createSumsumspart.run(gl, [rowsumsTexture], sumsumspartTexture, 1, 1024, vertexBuffer1, vertices1);
+        createSumsums.run(gl, [sumsumspartTexture], sumsumsTexture, 1, 32, vertexBuffer1, vertices1);
+    }
+
+    rawBuffer1 = new ArrayBuffer(32 * 1 * 4 * 4);
+    output1 = new Uint32Array(rawBuffer1);
+    gl.readPixels(0, 0, 1, 32, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output1);
+    console.log(output1.filter((_val, i) => i % 4 == 0));
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+    end1 = performance.now();
+    console.log('duration: ' + (end1 - start1))
+
+    return;
+
     const compressedMatrixTexture = await createInputDataTexture(gl);
     const lookupTableTexture = createEmptyLookupTableTexture(gl);
     let inputVectorTexture = createVectorTexture(gl);
     let outputVectorTexture = createVectorTexture(gl);
-    let { vertexBuffer, vertices } = createVertexBuffer(gl, this.program);
+    let { vertexBuffer, vertices } = createVertexBuffer(gl);
 
     const framebuffer = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
@@ -93,12 +152,12 @@ class GlProgram {
     }
 }
 
-function createEmptyLookupTableTexture(gl) {
+function createOffsetTexture(gl) {
+    const data = new Uint8Array(Array.from({ length: 1024 * 1024 }, (_, i) => i % 100));
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
-
-    // Upload the (still empty) texture to the GPU:
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, 4096, 1, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null);
+    // Upload the texture to the GPU:
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, 1024, 1024, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, data);
 
     // can't filter integer textures
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
@@ -107,6 +166,33 @@ function createEmptyLookupTableTexture(gl) {
     return texture;
 }
 
+function createEmptySumsTexture(gl, width, height) {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    // Upload the texture to the GPU:
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, null);
+
+    // can't filter integer textures
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    return texture;
+}
+
+
+function createEmptyLookupTableTexture(gl) {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+
+    // Upload the (still empty) texture to the GPU:
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, 1024, 1024, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, null);
+
+    // can't filter integer textures
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    return texture;
+}
 
 async function createInputDataTexture(gl) {
     const response = await fetch("mock-matrix.bin");

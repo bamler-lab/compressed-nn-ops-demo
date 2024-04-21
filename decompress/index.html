@@ -94,6 +94,129 @@
       val = val % int(1024); // Temporary hack to prevent values from exploding
     }
   </script>
+  <script id="partpartsum-shader" type="x-shader/x-fragment">#version 300 es
+    precision highp float;
+    precision mediump int;
+    uniform lowp usampler2D input_data;
+    uniform int width;
+    uniform int height;
+
+    in vec2 float_pos;
+    out mediump uint sum;
+
+    void main() {
+      ivec2 pos = ivec2(
+        int(0.5 * float(width) * (float_pos.x + 1.0)),
+        int(0.5 * float(height) * (float_pos.y + 1.0))
+      );
+
+      sum = 0u;
+      for (int i=pos.x & (1023 - 7); i!=pos.x; ++i) {
+        sum = (sum + texelFetch(input_data, ivec2(i, pos.y), 0).r) % 10000u;
+      }
+      sum = (sum + texelFetch(input_data, pos, 0).r) % 10000u;
+    }
+  </script>
+  <script id="partsum-shader" type="x-shader/x-fragment">#version 300 es
+    precision highp float;
+    precision mediump int;
+    uniform lowp usampler2D input_data;
+    uniform int width;
+    uniform int height;
+
+    in vec2 float_pos;
+    out mediump uint sum;
+
+    void main() {
+      ivec2 pos = ivec2(
+        int(0.5 * float(width) * (float_pos.x + 1.0)),
+        int(0.5 * float(height) * (float_pos.y + 1.0))
+      );
+
+      sum = 0u;
+      int endpos = (pos.x << 3) | 7;
+      int startpos = endpos & (((127 - 3) * 8) | 7);
+      for (int i=startpos; i!=endpos; i+=8) {
+        sum = (sum + texelFetch(input_data, ivec2(i, pos.y), 0).r) % 10000u;
+      }
+      sum = (sum + texelFetch(input_data, ivec2(endpos, pos.y), 0).r) % 10000u;
+    }
+  </script>
+  <script id="rowsum-shader" type="x-shader/x-fragment">#version 300 es
+    precision highp float;
+    precision mediump int;
+    uniform lowp usampler2D input_data;
+    uniform int width;
+    uniform int height;
+
+    in vec2 float_pos;
+    out mediump uint sum;
+
+    void main() {
+      ivec2 pos = ivec2(
+        int(0.5 * float(width) * (float_pos.x + 1.0)),
+        int(0.5 * float(height) * (float_pos.y + 1.0))
+      );
+
+      sum = 0u;
+      int endpos = pos.x * 4 + 3;
+      for (int i=3; i!=endpos; i+=4) {
+        sum = (sum + texelFetch(input_data, ivec2(i, pos.y), 0).r) % 10000u;
+      }
+      sum = (sum + texelFetch(input_data, ivec2(endpos, pos.y), 0).r) % 10000u;
+    }
+  </script>
+  <script id="sumsumpart-shader" type="x-shader/x-fragment">#version 300 es
+    precision highp float;
+    precision mediump int;
+    uniform lowp usampler2D input_data;
+    uniform int width;
+    uniform int height;
+    // uniform int input_col;
+
+    in vec2 float_pos;
+    out mediump uint sum;
+
+    void main() {
+      int input_col = 31;
+      ivec2 pos = ivec2(
+        int(0.5 * float(width) * (float_pos.x + 1.0)),
+        int(0.5 * float(height) * (float_pos.y + 1.0))
+      );
+
+      sum = 0u;
+      int startpos = pos.y & (1023 - 31);
+      for (int i=startpos; i!=pos.y; ++i) {
+        sum = (sum + texelFetch(input_data, ivec2(input_col, i), 0).r) % 10000u;
+      }
+      sum = (sum + texelFetch(input_data, ivec2(input_col, pos.y), 0).r) % 10000u;
+    }
+  </script>
+  <script id="sumsum-shader" type="x-shader/x-fragment">#version 300 es
+    precision highp float;
+    precision mediump int;
+    uniform lowp usampler2D input_data;
+    uniform int width;
+    uniform int height;
+    // uniform int input_col;
+
+    in vec2 float_pos;
+    out mediump uint sum;
+
+    void main() {
+      ivec2 pos = ivec2(
+        int(0.5 * float(width) * (float_pos.x + 1.0)),
+        int(0.5 * float(height) * (float_pos.y + 1.0))
+      );
+
+      sum = 0u;
+      int endpos = (pos.y * 32) | 31;
+      for (int i=31; i!=endpos; i+=32) {
+        sum = (sum + texelFetch(input_data, ivec2(0, i), 0).r) % 10000u;
+      }
+      sum = (sum + texelFetch(input_data, ivec2(0, endpos), 0).r) % 10000u;
+    }
+  </script>
   <script>
     window.addEventListener('DOMContentLoaded', run);
   </script>
