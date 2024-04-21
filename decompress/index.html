@@ -31,13 +31,13 @@
         uint(0.5 * float(height) * (float_pos.y + 1.0))
       );
 
-      int y = 4;
+      int y = 2;
       
       uint threshold = pos.x;
-      for (int x=0; x!=200; x+=2) { // 200 is a somewhat arbitrary cutoff here.
+      for (int x=2; x!=200; x+=2) { // 200 is a somewhat arbitrary cutoff here.
         uint cdf = texelFetch(compressedMatrix, ivec2(x, y), 0).r;
         if (cdf > threshold) {
-          val = uint(x);
+          val = uint(x - 2);
           return;
         }
       }
@@ -56,53 +56,42 @@
     out mediump int val;
 
     void main() {
-      uvec2 pos = uvec2(
-        uint(0.5 * float(width) * (float_pos.x + 1.0)),
-        uint(0.5 * float(height) * (float_pos.y + 1.0))
-      );
-
-      uint column = pos.x + 512u * pos.y;
-      ivec2 offset_pos = ivec2(int(2u * (column & 255u)), int(column >> 8));
+      uint column = uint(0.5 * float(width) * (float_pos.x + 1.0));
+      ivec2 offset_pos = ivec2(int(2u * (column & 511u)), int(column >> 9));
       uint offset_lo = texelFetch(compressedMatrix, offset_pos, 0).r;
       uint offset_hi = texelFetch(compressedMatrix, ivec2(offset_pos.x + 1, offset_pos.y), 0).r;
-      uint index = offset_lo | (offset_hi << 16);
+      uint read_index = offset_lo | (offset_hi << 16);
 
       // Initialize decoder
-      ivec2 read_pos = ivec2(index & 511u, index >> 9);
+      ivec2 read_pos = ivec2(read_index & 1023u, read_index >> 10);
       uint head = texelFetch(compressedMatrix, read_pos, 0).r;
-      ++index;
-      read_pos = ivec2(index & 511u, index >> 9);
+      ++read_index;
+      read_pos = ivec2(read_index & 1023u, read_index >> 10);
       head = (head << 16) | texelFetch(compressedMatrix, read_pos, 0).r;
-      
       val = 0;
-      ivec2 model_lookup = ivec2(0, 4);
+      ivec2 model_lookup = ivec2(0, 2);
 
-      for (int j=0; j!=2; ++j) {
-        for (int i=0; i!=512; ++i) {
-          uint quantile = head & uint(0x0fff);
-          head = head >> 12;
-          model_lookup.x = int(texelFetch(lookupTable, ivec2(quantile & 4095u, 0), 0).r);
-          uint left_cdf = texelFetch(compressedMatrix, model_lookup, 0).r;
-          ++model_lookup.x;
-          uint matrix_entry_uint = texelFetch(compressedMatrix, model_lookup, 0).r;
-          int matrix_entry = int(matrix_entry_uint) - int(0x8000);
-          ++model_lookup.x;
-          uint right_cdf = texelFetch(compressedMatrix, model_lookup, 0).r;
-          uint prob =  right_cdf - left_cdf;
-          uint remainder = quantile - left_cdf;
-          head = head * prob + remainder;
-
-          int vector_entry = texelFetch(vector, ivec2(j, i), 0).r;
-          val += matrix_entry * vector_entry;
-
-          if ((head >> 16) == uint(0)) {
-            ++index;
-            read_pos = ivec2(index & 511u, index >> 9);
-            head = (head << 16) | texelFetch(compressedMatrix, read_pos, 0).r;
-          }
+      for (int i=0; i!=1024; ++i) { // TODO: 1024 is not guaranteed to be representable in mediump int
+        uint quantile = head & uint(0x0fff);
+        model_lookup.x = int(texelFetch(lookupTable, ivec2(quantile, 0), 0).r);
+        uint left_cdf = texelFetch(compressedMatrix, model_lookup, 0).r;
+        ++model_lookup.x;
+        uint matrix_entry_uint = texelFetch(compressedMatrix, model_lookup, 0).r;
+        int matrix_entry = int(matrix_entry_uint) - 0x8000;
+        ++model_lookup.x;
+        uint right_cdf = texelFetch(compressedMatrix, model_lookup, 0).r;
+        uint prob =  right_cdf - left_cdf;
+        uint remainder = quantile - left_cdf;
+        head = (head >> 12) * prob + remainder;
+        int vector_entry = texelFetch(vector, ivec2(i, 0), 0).r;
+        val += matrix_entry * vector_entry;
+        if ((head >> 16) == 0u) {
+          ++read_index;
+          read_pos = ivec2(read_index & 1023u, read_index >> 10);
+          head = (head << 16) | texelFetch(compressedMatrix, read_pos, 0).r;
         }
       }
-      val = val % int(256) - 128; // Temporary hack to prevent values from exploding
+      val = val % int(1024); // Temporary hack to prevent values from exploding
     }
   </script>
   <script>

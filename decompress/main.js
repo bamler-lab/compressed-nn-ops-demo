@@ -23,15 +23,15 @@ async function run() {
         createLookupTable.run(gl, [compressedMatrixTexture], lookupTableTexture, 4096, 1, vertexBuffer, vertices);
         compressedMatrixVectorProduct.run(
             gl, [compressedMatrixTexture, lookupTableTexture, inputVectorTexture],
-            outputVectorTexture, 512, 2, vertexBuffer, vertices);
+            outputVectorTexture, 1024, 1, vertexBuffer, vertices);
         let tmp = inputVectorTexture;
         inputVectorTexture = outputVectorTexture;
         outputVectorTexture = tmp;
     }
 
-    let rawBuffer = new ArrayBuffer(512 * 2 * 4 * 4);
+    let rawBuffer = new ArrayBuffer(1024 * 1 * 4 * 4);
     let output = new Int32Array(rawBuffer);
-    gl.readPixels(0, 0, 512, 2, gl.RGBA_INTEGER, gl.INT, output);
+    gl.readPixels(0, 0, 1024, 1, gl.RGBA_INTEGER, gl.INT, output);
     console.log(output.filter((_val, i) => i % 4 == 0));
 
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -45,13 +45,13 @@ async function run() {
         createLookupTable.run(gl, [compressedMatrixTexture], lookupTableTexture, 4096, 1, vertexBuffer, vertices);
         compressedMatrixVectorProduct.run(
             gl, [compressedMatrixTexture, lookupTableTexture, inputVectorTexture],
-            outputVectorTexture, 512, 2, vertexBuffer, vertices);
+            outputVectorTexture, 1024, 1, vertexBuffer, vertices);
         let tmp = inputVectorTexture;
         inputVectorTexture = outputVectorTexture;
         outputVectorTexture = tmp;
     }
 
-    gl.readPixels(0, 0, 512, 2, gl.RGBA_INTEGER, gl.INT, output);
+    gl.readPixels(0, 0, 1024, 1, gl.RGBA_INTEGER, gl.INT, output);
     console.log(output.filter((_val, i) => i % 4 == 0));
 
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -116,7 +116,7 @@ async function createInputDataTexture(gl) {
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
     // Upload the texture to the GPU:
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, 512, 655, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, data);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, 1024, 328, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, data);
 
     // can't filter integer textures
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
@@ -130,7 +130,7 @@ function createVectorTexture(gl) {
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
     // Upload the texture to the GPU:
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16I, 512, 2, 0, gl.RED_INTEGER, gl.SHORT, data);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16I, 1024, 1, 0, gl.RED_INTEGER, gl.SHORT, data);
 
     // can't filter integer textures
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
