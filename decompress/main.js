@@ -3,6 +3,14 @@ async function run() {
     const gl = getGl(canvas);
     const vertexShader = compileShader(gl, "vertex-shader");
 
+    const response = await fetch("100-compressed-matrices.bin");
+    const buf = await response.arrayBuffer();
+    const data = new Uint16Array(buf);
+
+    const coderHeads = createTexture(gl, gl.RG16UI, 1024, 1024, gl.RG_INTEGER, gl.UNSIGNED_SHORT, data.subarray(0, 1024 * 1024 * 2));
+    const compressedData = createTexture(gl, gl.R16UI, 1024, 1024, gl.RED_INTEGER, gl.UNSIGNED_SHORT, data.subarray(1024 * 1024 * 2, 1024 * 1024 * 3));
+    const lookupTable = createTexture(gl, gl.R16UI, 4096, 1, gl.RED_INTEGER, gl.BYTE, null);
+
     const offsetTexture = createOffsetTexture(gl);
     const partpartsumsTexture = createEmptySumsTexture(gl, 1024, 1024);
     const partsumsTexture = createEmptySumsTexture(gl, 128, 1024);
@@ -63,7 +71,6 @@ async function run() {
     return;
 
     const compressedMatrixTexture = await createInputDataTexture(gl);
-    const lookupTableTexture = createEmptyLookupTableTexture(gl);
     let inputVectorTexture = createVectorTexture(gl);
     let outputVectorTexture = createVectorTexture(gl);
     let { vertexBuffer, vertices } = createVertexBuffer(gl);
@@ -117,6 +124,20 @@ async function run() {
     end = performance.now();
     console.log('duration: ' + (end - start))
 }
+
+function createTexture(gl, internal_format, width, height, format, type, pixels) {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    // Upload the texture to the GPU:
+    gl.texImage2D(gl.TEXTURE_2D, 0, internal_format, width, height, 0, format, type, pixels);
+
+    // can't filter integer textures
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    return texture;
+}
+
 
 class GlProgram {
     constructor(gl, vertexShader, fragmentShaderId, textureNames) {
