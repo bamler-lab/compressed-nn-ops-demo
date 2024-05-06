@@ -21,21 +21,19 @@
     uniform mediump usampler2D compressedData;
     uniform int width;
     uniform int height;
+    uniform highp int cursor;
 
     in vec2 float_pos;
     out lowp uint val;
 
     void main() {
-      uvec2 pos = uvec2(
-        uint(0.5 * float(width) * (float_pos.x + 1.0)),
-        uint(0.5 * float(height) * (float_pos.y + 1.0))
-      );
+      uint threshold = uint(0.5 * float(width) * (float_pos.x + 1.0));
 
-      uint threshold = pos.x;
-      for (int x=1; x!=200; ++x) { // 200 is a somewhat arbitrary cutoff here.
-        uint cdf = texelFetch(compressedData, ivec2(x, 0), 0).r;
+      for (highp int x=cursor+2; x!=cursor+200; ++x) { // 200 is a somewhat arbitrary cutoff here.
+        ivec2 readPos = ivec2(x & 1023, x >> 10);
+        uint cdf = texelFetch(compressedData, readPos, 0).r;
         if (cdf > threshold) {
-          val = uint(x - 1);
+          val = uint(x - (cursor + 2));
           return;
         }
       }
@@ -52,9 +50,9 @@
     uniform lowp usampler2D coderOffsets3;
     uniform lowp usampler2D coderOffsets4;
     uniform mediump usampler2D coderOffsets5;
-    // uniform uint matrixBegin;
     uniform int width;
     uniform int height;
+    uniform highp int cursor;
 
     in vec2 float_pos;
     layout(location=0) out mediump uint val;
@@ -67,17 +65,28 @@
       );
 
       uvec2 head = texelFetch(coderHeads, pos, 0).xy;
+      highp uint cursor_u = uint(cursor);
 
       // Refill `head` if necessary:
       if (head.x == 0u) {
         head.x = head.y;
-        uint readOffset = //matrixBegin - 1u +
-          texelFetch(coderOffsets1, pos, 0).r +
-          texelFetch(coderOffsets2, ivec2(pos.x / 4, pos.y), 0).r +
-          texelFetch(coderOffsets3, ivec2(pos.x / 32, pos.y), 0).r +
-          texelFetch(coderOffsets4, ivec2(0, pos.y), 0).r +
-          texelFetch(coderOffsets5, ivec2(0, pos.y / 32), 0).r;
-        ivec2 readPos = ivec2(int(readOffset & 1023u), int(readOffset >> 10));
+        ivec2 readPos = ivec2(int(cursor_u & 1023u), int(cursor_u >> 10));
+        uint dataOffset = texelFetch(compressedData, readPos, 0).r;
+        uint readOffset = cursor_u + dataOffset;
+        highp int pos_i = pos.x | (pos.y << 10);
+
+        pos_i -= 1;
+        readOffset += texelFetch(coderOffsets1, ivec2(pos_i & 1023, pos_i >> 10), 0).r;
+        pos_i = (pos_i >> 2) - 1; // (right-shift for negative values seems to result in negative value, as we need it here.)
+        readOffset += texelFetch(coderOffsets2, ivec2(pos_i & 255, pos_i >> 8), 0).r;
+        pos_i = (pos_i >> 3) - 1;
+        readOffset += texelFetch(coderOffsets3, ivec2(pos_i & 31, pos_i >> 5), 0).r;
+        pos_i = (pos_i >> 5) - 1;
+        readOffset += texelFetch(coderOffsets4, ivec2(0, pos_i), 0).r;
+        pos_i = (pos_i >> 5) - 1;
+        readOffset += texelFetch(coderOffsets5, ivec2(0, pos_i), 0).r;
+
+        readPos = ivec2(int(readOffset & 1023u), int(readOffset >> 10));
         head.y = texelFetch(compressedData, readPos, 0).r;
       }
 
@@ -86,13 +95,15 @@
       uint quantile = headVal & uint(0x0fff);
       lowp uint symbol_id = texelFetch(lookupTable, ivec2(int(quantile), 0), 0).r;
       val = symbol_id;
-      mediump uint left_cdf = texelFetch(compressedData, ivec2(int(symbol_id), 0), 0).r;
-      mediump uint right_cdf = texelFetch(compressedData, ivec2(int(symbol_id) + 1, 0), 0).r;
+      highp uint cdfIndex = cursor_u + symbol_id + 1u;
+      mediump uint left_cdf = texelFetch(compressedData, ivec2(int(cdfIndex & 1023u), int(cdfIndex >> 10)), 0).r;
+      cdfIndex += 1u;
+      mediump uint right_cdf = texelFetch(compressedData, ivec2(int(cdfIndex & 1023u), int(cdfIndex >> 10)), 0).r;
       highp uint prob = right_cdf - left_cdf;
       highp uint remainder = quantile - left_cdf;
       highp uint newHead = (headVal >> 12) * prob + remainder;
       newCoderHead = uvec2(newHead >> 16, newHead & uint(0xffff));
-    }
+}
   </script>
   <script id="sumOffsets0-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float;
@@ -112,7 +123,7 @@
 
       sum = 0u;
       // TODO: manually unroll this loop and measure performance difference.
-      // Also, maybe do comparison to zero in "decode" shader write result to separate texture.
+      // Also, maybe do comparison to zero in "decode" shader and write result to separate texture.
       for (int i=pos.x & (1023 - 3); i!=pos.x; ++i) {
         sum += uint(texelFetch(coderHeads, ivec2(i, pos.y), 0).x == 0u);
       }
