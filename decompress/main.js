@@ -9,13 +9,13 @@ async function run() {
 
     let coderHeadsIn = createTexture(gl, gl.RG16UI, 1024, 1024, gl.RG_INTEGER, gl.UNSIGNED_SHORT, data.subarray(0, 1024 * 1024 * 2));
     let coderHeadsOut = createTexture(gl, gl.RG16UI, 1024, 1024, gl.RG_INTEGER, gl.UNSIGNED_SHORT, null);
-    const lookupTable = createTexture(gl, gl.R8UI, 4096, 1, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null);
+    const lookupTable = createTexture(gl, gl.R8UI, 1024, 64, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null);
 
     const coderOffsets1 = createTexture(gl, gl.R8UI, 1024, 1024, gl.RED_INTEGER, gl.UNSIGNED_BYTE, new Uint8Array(1024 * 1024));
     const coderOffsets2 = createTexture(gl, gl.R8UI, 256, 1024, gl.RED_INTEGER, gl.UNSIGNED_BYTE, new Uint8Array(256 * 1024));
     const coderOffsets3 = createTexture(gl, gl.R16UI, 32, 1024, gl.RED_INTEGER, gl.UNSIGNED_SHORT, new Uint16Array(32 * 1024));
     const coderOffsets4 = createTexture(gl, gl.R16UI, 1, 1024, gl.RED_INTEGER, gl.UNSIGNED_SHORT, new Uint16Array(2 * 1024));
-    const coderOffsets5 = createTexture(gl, gl.R32UI, 1, 32, gl.RED_INTEGER, gl.UNSIGNED_INT, new Uint32Array(1 * 32));
+    const coderOffsets5 = createTexture(gl, gl.RG16UI, 1, 32, gl.RG_INTEGER, gl.UNSIGNED_SHORT, new Uint16Array(1 * 32 * 2));
 
     let { vertexBuffer, vertices } = createVertexBuffer(gl);
     const framebuffer = gl.createFramebuffer();
@@ -29,10 +29,10 @@ async function run() {
     );
 
     const sumOffsets0 = new GlProgram(gl, vertexShader, "sumOffsets0-shader", ["coderHeads"]);
-    const sumOffsets1 = new GlProgram(gl, vertexShader, "sumOffsets1-shader", ["sumOffsets0"]);
-    const sumOffsets2 = new GlProgram(gl, vertexShader, "sumOffsets2-shader", ["sumOffsets1"]);
-    const sumOffsets3 = new GlProgram(gl, vertexShader, "sumOffsets3-shader", ["sumOffsets2"]);
-    const sumOffsets4 = new GlProgram(gl, vertexShader, "sumOffsets4-shader", ["sumOffsets3"]);
+    const sumOffsets1 = new GlProgram(gl, vertexShader, "sumOffsets1-shader", ["coderOffsets1"]);
+    const sumOffsets2 = new GlProgram(gl, vertexShader, "sumOffsets2-shader", ["coderOffsets2"]);
+    const sumOffsets3 = new GlProgram(gl, vertexShader, "sumOffsets3-shader", ["coderOffsets3"]);
+    const sumOffsets4 = new GlProgram(gl, vertexShader, "sumOffsets4-shader", ["coderOffsets4"]);
 
     await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -65,13 +65,14 @@ async function run() {
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, 1024, 1024, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, dat);
         }
 
-        createLookup.run(gl, [compressedData], [lookupTable], 4096, 1, vertexBuffer, vertices, [cursor]);
+        const cursorVec = [cursor & 1023, cursor >> 10];
+        createLookup.run(gl, [compressedData], [lookupTable], 1024, 64, vertexBuffer, vertices, [cursorVec]);
         decode.run(
             gl,
             [coderHeadsIn, compressedData, lookupTable, coderOffsets1, coderOffsets2, coderOffsets3, coderOffsets4, coderOffsets5],
             [matrix, coderHeadsOut],
             1024, 1024, vertexBuffer, vertices,
-            [cursor]
+            [cursorVec]
         );
         cursor += currentSize;
 
@@ -86,31 +87,35 @@ async function run() {
         coderHeadsOut = swapTmp;
 
         matrices.push(matrix);
-
-        // gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, coderOffsets5, 0);
-        // const rawBuffer = new ArrayBuffer(16);
-        // const buffer = new Uint32Array(rawBuffer);
-        // gl.readPixels(0, 31, 1, 1, gl.RGBA_INTEGER, gl.UNSIGNED_INT, buffer);
-        // nextSize = buffer[0];
-        // console.log({ nextSize });
     }
-
-    // gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, coderOffsets5, 0);
-    // let rawBuffer = new ArrayBuffer(1 * 32 * 4 * 4);
-    // let output = new Uint32Array(rawBuffer);
-    // gl.readPixels(0, 0, 1, 32, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
-    // console.log(output.filter((_val, i) => i % 4 == 0));
-    // console.log({ sum: output.filter((_val, i) => i % 4 == 0).reduce((s, x) => s + x, 0) });
 
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, matrices[99], 0);
     let rawBuffer = new ArrayBuffer(1 * 1 * 4 * 4);
     let output = new Uint32Array(rawBuffer);
-    gl.readPixels(0, 0, 1, 1, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
-    console.log(output[0]);
+    gl.readPixels(567, 234, 1, 1, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
+    document.write('<br>matrix99[234, 567]: ' + output[0])
 
     await new Promise(resolve => setTimeout(resolve, 0));
     let end = performance.now();
     console.log('duration: ' + (end - start))
+    document.write('<br>duration: ' + (end - start))
+
+    for (let i = 0; i != 100; ++i) {
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, matrices[i], 0);
+        rawBuffer = new ArrayBuffer(1024 * 1024 * 4 * 4);
+        output = new Uint32Array(rawBuffer);
+        gl.readPixels(0, 0, 1024, 1024, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
+        const flat_matrix = output.filter((_val, i) => i % 4 == 0);
+
+        let checksum = 123;
+        for (let value of flat_matrix) {
+            checksum = (checksum << 5) | (checksum >> 11); // rotate
+            checksum = (checksum + 1) * (value + 1);
+            checksum = checksum & 65535; // truncate to 16 bit
+        }
+        document.write(`<br>checksum of matrix ${i}: ${checksum}`);
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
 }
 
 function createTexture(gl, internal_format, width, height, format, type, pixels) {
@@ -150,7 +155,7 @@ class GlProgram {
         gl.enableVertexAttribArray(this.vertexPositionLocation);
 
         for (let i = 0; i != this.uniformLocations.length; ++i) {
-            gl.uniform1i(this.uniformLocations[i], uniforms[i]);
+            gl.uniform2iv(this.uniformLocations[i], uniforms[i]);
         }
 
         // WebGL is guaranteed to have at least 8 texture units.
