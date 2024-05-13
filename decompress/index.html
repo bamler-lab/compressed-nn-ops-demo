@@ -18,30 +18,20 @@
   <script id="create-lookup-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float;
     precision highp int;
-    uniform highp usampler2D compressedData;
-    uniform int width;
-    uniform int height;
-    uniform highp ivec2 cursor;
+    uniform mediump usampler2D compressedData;
+    uniform mediump int width;
+    uniform mediump int height;
+    uniform highp int cursor;
 
-    in vec2 float_pos;
+    in highp vec2 float_pos;
     out lowp uint val;
 
     void main() {
-      ivec2 pos = ivec2(
-        int(0.5 * float(width) * (float_pos.x + 1.0)),
-        int(0.5 * float(height) * (float_pos.y + 1.0))
-      );
+      mediump uint threshold = uint(0.5 * float(width) * (float_pos.x + 1.0));
 
-      if (pos.x == 1023 && pos.y == 63) {
-        return; // quantile 0x0fff is never used because its right cdf can't be represented in 16 bit.
-      }
-
-      uint threshold = uint(pos.x) | (uint(pos.y) << 10);
-
-      highp int endpoint = cursor.x + 200; // 200 is a somewhat arbitrary cutoff here.
-      for (highp int x=cursor.x+2; x!=endpoint; ++x) {
-        ivec2 readPos = ivec2(x & 1023, cursor.y + (x >> 10));
-        uint cdf = texelFetch(compressedData, readPos, 0).r;
+      for (highp int x=cursor+2; x!=cursor+200; ++x) { // 200 is a somewhat arbitrary cutoff here.
+        mediump ivec2 readPos = ivec2(x & 1023, x >> 10);
+        mediump uint cdf = texelFetch(compressedData, readPos, 0).r;
         if (cdf > threshold) {
           val = uint(x - (cursor + 2));
           return;
@@ -52,126 +42,82 @@
   <script id="decode-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float;
     precision highp int;
-    uniform highp usampler2D coderHeads;
-    uniform highp usampler2D compressedData;
-    uniform highp usampler2D lookupTable;
-    uniform highp usampler2D coderOffsets1;
-    uniform highp usampler2D coderOffsets2;
-    uniform highp usampler2D coderOffsets3;
-    uniform highp usampler2D coderOffsets4;
+    uniform mediump usampler2D coderHeads;
+    uniform mediump usampler2D compressedData;
+    uniform lowp usampler2D lookupTable;
+    uniform lowp usampler2D coderOffsets1;
+    uniform lowp usampler2D coderOffsets2;
+    uniform mediump usampler2D coderOffsets3;
+    uniform mediump usampler2D coderOffsets4;
     uniform highp usampler2D coderOffsets5;
-    uniform int width;
-    uniform int height;
-    uniform highp ivec2 cursor;
+    uniform mediump int width;
+    uniform mediump int height;
+    uniform highp int cursor;
 
-    in vec2 float_pos;
-    layout(location=0) out highp uint val;
-    layout(location=1) out highp uvec2 newCoderHead;
+    in highp vec2 float_pos; // NOTE: for 10-bit positions, `mediump vec2` should work as well.
+    layout(location=0) out mediump uint val;
+    layout(location=1) out mediump uvec2 newCoderHead;
 
     void main() {
-      ivec2 pos = ivec2(
+      mediump ivec2 pos = ivec2(
         int(0.5 * float(width) * (float_pos.x + 1.0)),
         int(0.5 * float(height) * (float_pos.y + 1.0))
       );
 
-      uvec2 head = texelFetch(coderHeads, pos, 0).xy;
+      mediump uvec2 head = texelFetch(coderHeads, pos, 0).xy;
+      highp uint cursor_u = uint(cursor);
 
       // Refill `head` if necessary:
       if (head.x == 0u) {
         head.x = head.y;
-        uint dataOffset = texelFetch(compressedData, cursor, 0).r;
-        highp ivec2 readPos = ivec2(pos.x + 1023, pos.y - 1); // subtract 1
-        readPos = ivec2(readPos.x & 1023, readPos.y + (readPos.x >> 10)); // realign
-        dataOffset += texelFetch(coderOffsets1, readPos, 0).r;
-        readPos = ivec2((readPos.x >> 2) + 255, readPos.y - 1);
-        readPos = ivec2(readPos.x & 255, readPos.y + (readPos.x >> 8)); // realign
-        dataOffset += texelFetch(coderOffsets2, readPos, 0).r;
-        highp int readPos_i = ((readPos.y << 5) | (readPos.x >> 3)) - 1;
-        dataOffset += texelFetch(coderOffsets3, ivec2(readPos_i & 31, readPos_i >> 5), 0).r;
-        readPos_i = (readPos_i >> 5) - 1;
-        dataOffset += texelFetch(coderOffsets4, ivec2(0, readPos_i), 0).r;
-        readPos_i = (readPos_i >> 5) - 1;
-        uvec2 cursor_u = uvec2(uint(cursor.x), uint(cursor.y));
-        highp uvec2 offset = texelFetch(coderOffsets5, ivec2(0, readPos_i), 0).xy + cursor_u;
-        offset.x += dataOffset;
-        offset.y += (offset.x >> 10);
-        offset.x = offset.x & 1023u;
+        ivec2 readPos = ivec2(int(cursor_u & 1023u), int(cursor_u >> 10));
+        uint dataOffset = texelFetch(compressedData, readPos, 0).r;
+        uint readOffset = cursor_u + dataOffset;
+        highp int pos_y_31bit = pos.y;
+        highp int pos_i = pos.x | (pos_y_31bit << 10);
         
-        head.y = texelFetch(compressedData, ivec2(int(offset.x), int(offset.y)), 0).r;
+        pos_i -= 1;
+        readOffset += texelFetch(coderOffsets1, ivec2(pos_i & 1023, pos_i >> 10), 0).r;
+        pos_i = (pos_i >> 2) - 1; // (right-shift for negative values seems to result in negative value, as we need it here.)
+        readOffset += texelFetch(coderOffsets2, ivec2(pos_i & 255, pos_i >> 8), 0).r;
+        pos_i = (pos_i >> 3) - 1;
+        readOffset += texelFetch(coderOffsets3, ivec2(pos_i & 31, pos_i >> 5), 0).r;
+        pos_i = (pos_i >> 5) - 1;
+        readOffset += texelFetch(coderOffsets4, ivec2(0, pos_i), 0).r;
+        pos_i = (pos_i >> 5) - 1;
+        readOffset += texelFetch(coderOffsets5, ivec2(0, pos_i), 0).r;
+        
+        readPos = ivec2(int(readOffset & 1023u), int(readOffset >> 10));
+        head.y = texelFetch(compressedData, readPos, 0).r;
       }
-
-      // Decode value:
-      lowp uint symbol_id = texelFetch(lookupTable, ivec2(int(head.y & 1023u), int(head.y >> 10)), 0).r;
-      val = symbol_id;
-      highp uint cdf_offset = uint(cursor.x) + symbol_id + 1u;
-      highp uint left_cdf = texelFetch(compressedData, ivec2(int(cdf_offset & 1023u), cursor.y + int(cdf_offset >> 10)), 0).r;
-      cdf_offset += 1u;
-      highp uint right_cdf = texelFetch(compressedData, ivec2(int(cdf_offset & 1023u), cursor.y + int(cdf_offset >> 10)), 0).r;
-      highp uint prob = right_cdf - left_cdf;
-      highp uint remainder = head.y - left_cdf;
-
-      // We now have to calculate `head.x * prob + remainder`, where each operand is a 16-bit
-      // integer and the result is a 32-bit integer. Since WebGL isn't guaranteed to provide 32-bit
-      // integer operations, we emulate 32-bit multiplication using 16-bit operations as follows:
-      // - We split both 16-bit operands of the multiplication into two 8-bit words:
-      //   `head.x = (h1 << 8) | h0` and `prob = (p1 << 8) | p0`.
-      // - Thus, `head.x * prob = ((h1 * p1) << 16) | ((h1 * p0 + h0 * p1) << 8) | (h0 * p1)`.
-      // - For the entire operation, we obtain, using the notation of long multiplication:
-      //       +-------+-------+     +-------+-------+     +-------+-------+
-      //       |  h1   |  h0   |  *  |  p1   |  p0   |  +  |   remainder   |  =
-      //       +-------+-------+     +-------+-------+     +-------+-------+
-      //
-      //       +-------+-------+-------+-------+
-      //       |   0   |   0   | rem. + h0*p0  |  <-- (need to handle possible overflow)
-      //    +  |       |  h0*p1+h1*p0  |   0   |  <-- (need to handle possible overflow)
-      //    +  |    h1 * p1    |   0   |   0   |  <-- (can't overflow, not even with carry bit)
-      //       +=======+=======+=======+=======+
-      //    =  |  ret3 |  ret2 |  ret1 |  ret0 |
-      //       +-------+-------+-------+-------+
-      //   where the 8-bit words `ret3`, `ret2`, `ret1`, and `ret0` make up the result `ret`.
-      // - We sum up each of the four columns in the above block notation, from right to left,
-      //   generating carry bits where necessary.
-
-      uint h1 = head.x >> 8;
-      uint h0 = head.x & 0xffu;
-      uint p1 = prob >> 8;
-      uint p0 = prob & 0xffu;
-
-      int ret10_a = int(h0 * p0);
-      int ret21_a = int(h0 * p1);
-      if (ret10_a > 0xffff - int(remainder)) {
-        // `remainder + h0 * p0` overflows 16 bit.
-        ret21_a += 0x0100; // Propagate Carry bit to `ret2`. Cannot overflow 16 bit.
-        ret10_a -= 0x10000;
-      }
-      uint ret10 = uint(ret10_a + int(remainder)); // Possible overflow is handled above.
       
-      int ret21_b = int(h1 * p0 + (ret10 >> 8)); // Cannot overflow 16 bit.
-      uint ret32 = h1 * p1;
-      if (ret21_b > 0xffff - ret21_a) {
-        // `ret21` overflows 16 bit.
-        ret32 += 0x0100u; // Propagate a carry bit into `ret3`.
-        ret21_a -= 0x10000;
-      }
-      uint ret21 = uint(ret21_a + ret21_b); // Possible overflow is handled above.
-
-      uint ret_high16 = ret32 + (ret21 >> 8); // Cannot overflow 16 bit.
-      uint ret_low16 = ((ret21 & 0xffu) << 8 ) | (ret10 & 0xffu);
-      newCoderHead = uvec2(ret_high16, ret_low16);
-    }
+      // Decode value:
+      mediump uint quantile = head.y & uint(0x0fff);
+      lowp uint symbol_id = texelFetch(lookupTable, ivec2(int(quantile), 0), 0).r;
+      val = symbol_id;
+      highp uint cdfIndex = cursor_u + symbol_id + 1u;
+      mediump uint left_cdf = texelFetch(compressedData, ivec2(int(cdfIndex & 1023u), int(cdfIndex >> 10)), 0).r;
+      cdfIndex += 1u;
+      mediump uint right_cdf = texelFetch(compressedData, ivec2(int(cdfIndex & 1023u), int(cdfIndex >> 10)), 0).r;
+      highp uint prob = right_cdf - left_cdf;
+      highp uint remainder = quantile - left_cdf;
+      highp uint head_x_32bit = head.x;
+      highp uint newHead = ((head_x_32bit << 4) | (head.y >> 12)) * prob + remainder;
+      newCoderHead = uvec2(newHead >> 16, newHead & uint(0xffff));
+}
   </script>
   <script id="sumOffsets0-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float;
     precision highp int;
-    uniform highp usampler2D coderHeads;
-    uniform int width;
-    uniform int height;
+    uniform mediump usampler2D coderHeads;
+    uniform mediump int width;
+    uniform mediump int height;
 
-    in vec2 float_pos;
+    in highp vec2 float_pos;
     out lowp uint sum;
 
     void main() {
-      ivec2 pos = ivec2(
+      mediump ivec2 pos = ivec2(
         int(0.5 * float(width) * (float_pos.x + 1.0)),
         int(0.5 * float(height) * (float_pos.y + 1.0))
       );
@@ -179,7 +125,7 @@
       sum = 0u;
       // TODO: manually unroll this loop and measure performance difference.
       // Also, maybe do comparison to zero in "decode" shader and write result to separate texture.
-      for (int i=pos.x & (1023 - 3); i!=pos.x; ++i) {
+      for (mediump int i=pos.x & (1023 - 3); i!=pos.x; ++i) {
         sum += uint(texelFetch(coderHeads, ivec2(i, pos.y), 0).x == 0u);
       }
       sum += uint(texelFetch(coderHeads, pos, 0).x == 0u);
@@ -189,99 +135,92 @@
     precision highp float;
     precision highp int;
     uniform lowp usampler2D coderOffsets1;
-    uniform int width;
-    uniform int height;
+    uniform mediump int width;
+    uniform mediump int height;
 
-    in vec2 float_pos;
+    in highp vec2 float_pos;
     out lowp uint sum;
 
     void main() {
-      ivec2 pos = ivec2(
+      mediump ivec2 pos = ivec2(
         int(0.5 * float(width) * (float_pos.x + 1.0)),
         int(0.5 * float(height) * (float_pos.y + 1.0))
       );
 
       sum = 0u;
-      int endpos = (pos.x << 2) | 3;
-      int startpos = endpos & (((255 - 7) * 4) | 3);
-      endpos += 4;
-      for (int i=startpos; i!=endpos; i+=4) {
+      mediump int endpos = (pos.x << 2) | 3;
+      mediump int startpos = endpos & (((255 - 7) * 4) | 3);
+      for (mediump int i=startpos; i!=endpos; i+=4) {
         sum += texelFetch(coderOffsets1, ivec2(i, pos.y), 0).r;
       }
+      sum += texelFetch(coderOffsets1, ivec2(endpos, pos.y), 0).r;
     }
   </script>
   <script id="sumOffsets2-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float;
-    precision highp int;
+    precision mediump int;
     uniform lowp usampler2D coderOffsets2;
-    uniform int width;
-    uniform int height;
+    uniform mediump int width;
+    uniform mediump int height;
 
-    in vec2 float_pos;
-    out highp uint sum;
+    in highp vec2 float_pos;
+    out mediump uint sum;
 
     void main() {
-      ivec2 pos = ivec2(
+      mediump ivec2 pos = ivec2(
         int(0.5 * float(width) * (float_pos.x + 1.0)),
         int(0.5 * float(height) * (float_pos.y + 1.0))
       );
 
       sum = 0u;
-      int endpos = ((pos.x + 1) << 3) | 7;
-      for (int i=7; i!=endpos; i+=8) {
+      mediump int endpos = (pos.x << 3) | 7;
+      for (mediump int i=7; i!=endpos; i+=8) {
         sum += texelFetch(coderOffsets2, ivec2(i, pos.y), 0).r;
       }
+      sum += texelFetch(coderOffsets2, ivec2(endpos, pos.y), 0).r;
     }
   </script>
   <script id="sumOffsets3-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float;
-    precision highp int;
-    uniform highp usampler2D coderOffsets3;
-    uniform int width;
-    uniform int height;
+    precision mediump int;
+    uniform mediump usampler2D coderOffsets3;
+    uniform mediump int width;
+    uniform mediump int height;
 
-    in vec2 float_pos;
-    out highp uint sum;
+    in highp vec2 float_pos;
+    out mediump uint sum;
 
     void main() {
-      int input_col = 31;
-      ivec2 pos = ivec2(
-        int(0.5 * float(width) * (float_pos.x + 1.0)),
-        int(0.5 * float(height) * (float_pos.y + 1.0))
-      );
+      mediump int input_col = 31;
+      mediump int output_row = int(0.5 * float(height) * (float_pos.y + 1.0));
 
       sum = 0u;
-      int startpos = pos.y & (1023 - 31);
-      int endpos = pos.y + 1;
-      for (int i=startpos; i!=endpos; ++i) {
+      mediump int startpos = output_row & (1023 - 31);
+      for (mediump int i=startpos; i!=output_row; ++i) {
         sum += texelFetch(coderOffsets3, ivec2(input_col, i), 0).r;
       }
+      sum += texelFetch(coderOffsets3, ivec2(input_col, output_row), 0).r;
     }
   </script>
   <script id="sumOffsets4-shader" type="x-shader/x-fragment">#version 300 es
     precision highp float;
-    precision highp int;
-    uniform highp usampler2D coderOffsets4;
-    uniform int width;
-    uniform int height;
+    precision mediump int;
+    uniform mediump usampler2D coderOffsets4;
+    uniform mediump int width;
+    uniform mediump int height;
 
-    in vec2 float_pos;
-    out highp uvec2 sum;
+    in highp vec2 float_pos;
+    out highp uint sum;
 
     void main() {
-      ivec2 pos = ivec2(
-        int(0.5 * float(width) * (float_pos.x + 1.0)),
-        int(0.5 * float(height) * (float_pos.y + 1.0))
-      );
+      mediump int output_row = int(0.5 * float(height) * (float_pos.y + 1.0));
 
-      sum = uvec2(0u, 0u);
-      int endpos = ((pos.y + 1) << 5) | 31;
+      sum = 0u;
+      mediump int endpos = ((output_row + 1) * 32) | 31;
       for (int i=31; i!=endpos; i+=32) {
-        sum.x += texelFetch(coderOffsets4, ivec2(0, i), 0).r;
-        sum.y += sum.x >> 10;
-        sum.x = sum.x & 1023u;
+        sum += texelFetch(coderOffsets4, ivec2(0, i), 0).r;
       }
-  }
+    }
   </script>
   <script>
     window.addEventListener('DOMContentLoaded', run);
