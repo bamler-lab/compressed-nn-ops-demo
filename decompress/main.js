@@ -107,11 +107,13 @@ async function run() {
         gl.readPixels(0, 0, 1024, 1024, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
         const flat_matrix = output.filter((_val, i) => i % 4 == 0);
 
-        let checksum = 123;
+        // Checksum adapted from rust's FxHash, but restricted to 26 bit hashes so that the
+        // multiplication doesn't exceed the range of exactly representable integers in JavaScript.
+        let checksum = 0;
         for (let value of flat_matrix) {
-            checksum = (checksum << 5) | (checksum >> 11); // rotate
-            checksum = (checksum + 1) * (value + 1);
-            checksum = checksum & 65535; // truncate to 16 bit
+            checksum = (((checksum & 0x001f_ffff) << 5) | (checksum >> 21)) >>> 0; // rotate
+            checksum = ((checksum ^ value) >>> 0) * 0x0322_0a95;
+            checksum = (checksum & 0x03ff_ffff) >>> 0 // truncate to 26 bit
         }
         document.write(`<br>checksum of matrix ${i}: ${checksum}`);
         await new Promise(resolve => setTimeout(resolve, 0));
