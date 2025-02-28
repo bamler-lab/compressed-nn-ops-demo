@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8">
+  <title>Entropy decoding in WebGL</title>
   <script src="main.js"></script>
   <script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
     precision highp float;
@@ -228,6 +229,62 @@
 </head>
 
 <body>
+  <h1>Matrix decompression in WebGL</h1>
+  <h2>How to run</h2>
+  <p>
+    Due to cross-site scripting protection, you can't open this website directly from a local file system.
+    Instead, open a terminal, <code>cd</code> into the directory that contains this HTML file, and run
+    <code>python -m http.server</code>.
+    Then, open the URL that is printed to the terminal in a web browser (usually <a
+      href="http://0.0.0.0:8000/">http://0.0.0.0:8000/</a>).
+  </p>
+  <h2>What's happening here?</h2>
+  <p>
+    This website waits for a few seconds after loading.
+    Then, it decompresses 100 compressed matrices of size 1024 x 1024 on the GPU using WebGL with a custom fragment
+    shader
+    that implements the asymmetric numeral systems (ANS) entropy coder (and some additional shaders that implement some
+    necessary bookkeeping due to WebGL limitations, and that actually seem to take up most of the execution time).
+    The matrices are written to memory in decompressed form.
+
+    Once decompression is done, the script prints the following below:
+  </p>
+  <ul>
+    <li>
+      <strong>The time it took to decode the 100 matrices.</strong>
+      This includes the time to <em>upload</em> the compressed bit string to the GPU, but not for <em>downloading</em>
+      any decompressed matrices from the GPU.
+    </li>
+    <li>
+      <strong>Checksums of each decoded matrix.</strong>
+      (for debugging, see jupyter notebook <a href="mock-data.ipynb"><code>mock-data.ipynb</code></a>.)
+    </li>
+  </ul>
+  <h2>Limitations</h2>
+  <p>
+    This is website deliberately tests a <em>wost-case scenario</em> to demonstrate that entropy coding can be done very
+    fast even on cheap consumer GPUs and even when restricting ourselves to WebGL as the lowest common denominator of
+    APIs for GPUs.
+    A serious implementation should be able to improve performance considerably because:
+  </p>
+  <ul>
+    <li>WebGPU is not intended for general purpose GPU (GPGPU) programming, and there's a lot of overhead for silly
+      operations like converting array indices to and from floating point representations.</li>
+    <li>We decode the entire matrices and write them to (GPU) memory. In a practical application for LLMs, it's probably
+      better to decode on-the-fly right while performing a matrix-vector multiplication. This way, decompressed
+      matrices never have to be written to memory.</li>
+    <li>Probably most importantly, WebGL is limited in that each fragment shader can only output a small amount of data.
+      Due to this limitation, the implementation in this website runs a <em>separate entropy coder for each matrix
+        element</em>, i.e., we run 1024*1024 ≈ 1&nbsp;million separate entropy coders that read from 1 million a
+      separate compressed bit streams that all need to be demuxed from a single physical bit stream. This demuxing
+      involves a lot of overhead for bookkeeping that can only partially be parallelized. In a practical application
+      that decodes on-the-fly while running a matrix-vector multiplication, one would probably only run one entropy
+      coder <em>per matrix row</em>, significantly simplifying the bookkeeping.</li>
+  </ul>
+  <h2>Output</h2>
+  <p id="output">
+    please wait ...
+  </p>
   <canvas id="canvas" width="512" height="256"></canvas>
 </body>
 

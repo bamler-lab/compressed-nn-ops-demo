@@ -1,5 +1,6 @@
 async function run() {
     const canvas = document.getElementById("canvas");
+    const output_elem = document.getElementById("output");
     const gl = getGl(canvas);
     const vertexShader = compileShader(gl, "vertex-shader");
 
@@ -102,16 +103,26 @@ async function run() {
     // console.log(output.filter((_val, i) => i % 4 == 0));
     // console.log({ sum: output.filter((_val, i) => i % 4 == 0).reduce((s, x) => s + x, 0) });
 
+    // Read from the last decoded matrix to ensure that decoding has actually happened
+    // at this point and isn't still scheduled to run in the background (it suffices to
+    // read only from the last matrix; the last matrix can only be decoded if all
+    // previous matrices were also decoded).
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, matrices[99], 0);
     let rawBuffer = new ArrayBuffer(1 * 1 * 4 * 4);
     let output = new Uint32Array(rawBuffer);
     gl.readPixels(567, 234, 1, 1, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
-    document.write('<br>matrix99[234, 567]: ' + output[0])
+    console.log('matrix99[234, 567]: ' + output[0])
+
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, matrices[0], 0);
+    rawBuffer = new ArrayBuffer(1 * 1 * 4 * 4);
+    output = new Uint32Array(rawBuffer);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA_INTEGER, gl.UNSIGNED_INT, output);
+    console.log('matrix0[0, 0]: ' + output[0])
 
     await new Promise(resolve => setTimeout(resolve, 0));
     let end = performance.now();
     console.log('duration: ' + (end - start))
-    document.write('<br>duration: ' + (end - start))
+    output_elem.innerHTML = `Duration for decoding 100 matrices of size 1024 x 1024: ${end - start} ms (i.e., ${((end - start) * 1e6 / (100 * 1024 * 1024)).toPrecision(3)} ns / matrix element).<br><br>`;
 
     for (let i = 0; i != 100; ++i) {
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, matrices[i], 0);
@@ -128,7 +139,7 @@ async function run() {
             checksum = ((checksum ^ value) >>> 0) * 0x0322_0a95;
             checksum = (checksum & 0x03ff_ffff) >>> 0 // truncate to 26 bit
         }
-        document.write(`<br>checksum of matrix ${i}: ${checksum}`);
+        output_elem.innerHTML += `checksum of matrix ${i}: ${checksum}<br>`;
         await new Promise(resolve => setTimeout(resolve, 0));
     }
 }
