@@ -122,7 +122,9 @@ async function run() {
     await new Promise(resolve => setTimeout(resolve, 0));
     let end = performance.now();
     console.log('duration: ' + (end - start))
-    output_elem.innerHTML = `Duration for decoding 100 matrices of size 1024 x 1024: ${end - start} ms (i.e., ${((end - start) * 1e6 / (100 * 1024 * 1024)).toPrecision(3)} ns / matrix element).<br><br>`;
+    output_elem.innerHTML = `Duration for decoding 100 matrices of size 1024 x 1024 each: ${end - start} ms;<br>`
+        + `→ i.e., ${((end - start) * 1e6 / (100 * 1024 * 1024)).toPrecision(3)} ns / matrix element;<br>`
+        + `→ i.e., ${(100 * 1024 * 1024 / (1e3 * (end - start))).toFixed(0)} million decoded matrix elements per second.<br><br>`;
 
     for (let i = 0; i != 100; ++i) {
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, matrices[i], 0);
