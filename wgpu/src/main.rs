@@ -1,39 +1,35 @@
-/// To serve as an introduction to the wgpu api, we will implement a simple
-/// compute shader which takes a list of numbers on the CPU and doubles them on the GPU.
-///
-/// While this isn't a very practical example, you will see all the major components
-/// of using wgpu headlessly, including getting a device, running a shader, and transferring
-/// data between the CPU and GPU.
-///
-/// If you time the recording and execution of this example you will certainly see that
-/// running on the gpu is slower than doing the same calculation on the cpu. This is because
-/// floating point multiplication is a very simple operation so the transfer/submission overhead
-/// is quite a lot higher than the actual computation. This is normal and shows that the GPU
-/// needs a lot higher work/transfer ratio to come out ahead.
-use std::{num::NonZeroU64, str::FromStr};
+use std::{num::NonZeroU64, path::PathBuf, str::FromStr};
+
+use clap::Parser;
+use log::{error, info};
 use wgpu::util::DeviceExt;
 
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    /// List of numbers to double.
+    numbers: Vec<f32>,
+
+    #[command(flatten)]
+    verbose: clap_verbosity_flag::Verbosity,
+}
+
 fn main() {
-    // Parse all arguments as floats. We need to skip argument 0, which is the name of the program.
-    let arguments: Vec<f32> = std::env::args()
-        .skip(1)
-        .map(|s| {
-            f32::from_str(&s).unwrap_or_else(|_| panic!("Cannot parse argument {s:?} as a float."))
-        })
-        .collect();
+    let cli = Cli::parse();
+
+    // wgpu uses `log` rather than `tracing`, so we'll use that too.
+    env_logger::Builder::new()
+        .filter_level(cli.verbose.log_level_filter())
+        .init();
+
+    let arguments = cli.numbers;
 
     if arguments.is_empty() {
-        println!("No arguments provided. Please provide a list of numbers to double.");
+        error!("No arguments provided. Please provide a list of numbers to double.");
         return;
     }
 
-    println!("Parsed {} arguments", arguments.len());
-
-    // wgpu uses `log` for all of our logging, so we initialize a logger with the `env_logger` crate.
-    //
-    // To change the log level, set the `RUST_LOG` environment variable. See the `env_logger`
-    // documentation for more information.
-    env_logger::init();
+    info!("Parsed {} arguments.", arguments.len());
 
     // We first initialize an wgpu `Instance`, which contains any "global" state wgpu needs.
     //
@@ -50,7 +46,7 @@ fn main() {
             .expect("Failed to create adapter");
 
     // Print out some basic information about the adapter.
-    println!("Running on Adapter: {:#?}", adapter.get_info());
+    info!("Running on Adapter: {:#?}", adapter.get_info());
 
     // Check to see if the adapter supports compute shaders. While WebGPU guarantees support for
     // compute shaders, wgpu supports a wider range of devices through the use of "downlevel" devices.
