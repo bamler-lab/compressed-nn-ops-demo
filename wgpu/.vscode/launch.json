@@ -1,0 +1,148 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'compressed_mat_vec_mul'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=compressed_mat_vec_mul"
+                ],
+                "filter": {
+                    "name": "compressed_mat_vec_mul",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'compressed_mat_vec_mul'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=compressed_mat_vec_mul",
+                    "--package=compressed_mat_vec_mul"
+                ],
+                "filter": {
+                    "name": "compressed_mat_vec_mul",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'compressed_mat_vec_mul'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=compressed_mat_vec_mul",
+                    "--package=compressed_mat_vec_mul"
+                ],
+                "filter": {
+                    "name": "compressed_mat_vec_mul",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'mk-random'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=mk-random",
+                    "--package=compressed_mat_vec_mul"
+                ],
+                "filter": {
+                    "name": "mk-random",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "-v",
+                "-k2",
+                "-d16",
+                "testmatrices.bin"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'mk-random'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=mk-random",
+                    "--package=compressed_mat_vec_mul"
+                ],
+                "filter": {
+                    "name": "mk-random",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'verify-random'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=verify-random",
+                    "--package=compressed_mat_vec_mul"
+                ],
+                "filter": {
+                    "name": "verify-random",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "-v",
+                "-k2",
+                "-d16",
+                "testmatrices.bin"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'verify-random'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=verify-random",
+                    "--package=compressed_mat_vec_mul"
+                ],
+                "filter": {
+                    "name": "verify-random",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

@@ -7,7 +7,44 @@
 			"problemMatcher": [
 				"$rustc"
 			],
+			"args": [
+				"--",
+				"-v",
+				"../mat-vec-mul/compressed_matrices_1024x1024.bin"
+			],
 			"label": "rust: cargo run"
+		},
+		{
+			"type": "cargo",
+			"command": "run",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"args": [
+				"--bin",
+				"mk-random",
+				"--release",
+				"--",
+				"-v",
+				"testmatrices.bin"
+			],
+			"label": "rust: cargo run mk-random in release mode"
+		},
+		{
+			"type": "cargo",
+			"command": "run",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"args": [
+				"--bin",
+				"verify-random",
+				"--release",
+				"--",
+				"-v",
+				"testmatrices.bin"
+			],
+			"label": "rust: cargo run verify-random in release mode"
 		},
 		{
 			"type": "cargo",
