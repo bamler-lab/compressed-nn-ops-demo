@@ -1,4 +1,5 @@
 [package]
+default-run = "demo"
 edition = "2024"
 name = "compressed_mat_vec_mul"
 publish = false

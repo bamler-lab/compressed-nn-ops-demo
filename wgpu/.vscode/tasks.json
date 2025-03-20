@@ -10,7 +10,7 @@
 			"args": [
 				"--",
 				"-v",
-				"../mat-vec-mul/compressed_matrices_1024x1024.bin"
+				"testmatrices.bin"
 			],
 			"label": "rust: cargo run"
 		},
