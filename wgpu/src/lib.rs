@@ -10,6 +10,9 @@ use constriction::stream::model::{ContiguousCategoricalEntropyModel, IterableEnt
 use probability::{distribution::Sample, source::Source};
 use rayon::prelude::*;
 
+mod f16;
+pub use f16::SimpleF16;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileHeader {
     /// Measured in bytes.
@@ -24,19 +27,19 @@ pub struct FileHeader {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UncompressedVector(Vec<i8>);
+pub struct UncompressedVector(pub Vec<i8>);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct UncompressedMatrix {
     rows: u32,
     cols: u32,
-    grid_spacing: f32,
+    grid_spacing: SimpleF16,
     data: Box<[i8]>,
 }
 
 #[derive(Clone, Debug)]
 pub struct CompressedMatrix {
-    grid_spacing: f32,
+    grid_spacing: SimpleF16,
     grid_start: i8,
 
     /// Includes a final entry that's always zero. Does not include padding.
@@ -157,16 +160,17 @@ impl UncompressedMatrix {
             })
             .collect::<Vec<_>>();
 
-        let grid_spacing = 127.0
-            / output_vec
-                .iter()
-                .map(|x| x.abs())
-                .max()
-                .expect("rows should be > 0") as f32;
+        let output_max = output_vec
+            .iter()
+            .map(|x| x.abs())
+            .max()
+            .expect("rows should be > 0");
+        let grid_spacing = SimpleF16::from_f32(127.0 / output_max as f32);
+        let grid_spacing_f32 = grid_spacing.to_f32();
 
         intermediate_vector.0.resize(rows as usize, 0);
         for (&src, dst) in output_vec.iter().zip(&mut intermediate_vector.0) {
-            *dst = (grid_spacing * src as f32).round() as i8;
+            *dst = (grid_spacing_f32 * src as f32).round() as i8;
         }
 
         Ok(Self {
@@ -400,16 +404,14 @@ impl CompressedMatrix {
 
     /// Returns the number of bytes written.
     pub fn to_write(&self, mut writer: impl Write) -> Result<u32> {
-        writer.write_f32::<LittleEndian>(self.grid_spacing)?;
-
+        writer.write_u16::<LittleEndian>(self.grid_spacing.to_bits())?;
         writer.write_i8(self.grid_start)?;
         let grid_size = (self.cdf.len() - 1) as u8;
         writer.write_u8(grid_size)?;
-        writer.write_all(&self.cdf)?;
 
+        writer.write_all(&self.cdf)?;
         // Pad to a multiple of 4 bytes.
-        let num_bytes = 2 + self.cdf.len();
-        let num_padding = 3 - (num_bytes + 3) % 4;
+        let num_padding = 3 - (self.cdf.len() + 3) % 4;
         writer.write_all(&[0u8; 3][0..num_padding])?;
 
         for &offset in &self.offsets {
@@ -419,23 +421,21 @@ impl CompressedMatrix {
             writer.write_u32::<LittleEndian>(data)?;
         }
 
-        Ok(
-            (4 + num_bytes + num_padding + 4 * (self.offsets.len() + self.compressed_data.len()))
-                as u32,
-        )
+        Ok((4
+            + self.cdf.len()
+            + num_padding
+            + 4 * (self.offsets.len() + self.compressed_data.len())) as u32)
     }
 
     pub fn from_read(mut reader: impl Read, rows: u32) -> Result<Self> {
-        let grid_spacing = reader.read_f32::<LittleEndian>()?;
-
+        let grid_spacing = SimpleF16::from_bits(reader.read_u16::<LittleEndian>()?);
         let grid_start = reader.read_i8()?;
         let grid_size = reader.read_u8()?;
+
         let mut cdf = vec![0u8; grid_size as usize + 1];
         reader.read_exact(&mut cdf)?;
-
         // Ignore the padding.
-        let num_bytes = 2 + cdf.len();
-        let num_padding = 3 - (num_bytes + 3) % 4;
+        let num_padding = 3 - (cdf.len() + 3) % 4;
         reader.read_exact(&mut [0u8; 3][0..num_padding])?;
 
         let offsets = (0..rows + 1)
