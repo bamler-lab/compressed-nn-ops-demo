@@ -125,7 +125,7 @@ fn main() -> Result<()> {
 
     let output_vector_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 4 * file_header.dimensions[1] as u64,
+        size: file_header.dimensions[1] as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
@@ -135,7 +135,7 @@ fn main() -> Result<()> {
     // and that usage can only be used with `COPY_DST`.
     let download_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 4 * file_header.dimensions[1] as u64,
+        size: file_header.dimensions[1] as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -303,7 +303,7 @@ fn main() -> Result<()> {
 
     // We can now read the data from the buffer.
     let data = buffer_slice.get_mapped_range();
-    let result: &[i32] = bytemuck::cast_slice(&data);
+    let result: &[i8] = bytemuck::cast_slice(&data);
 
     // Print out the result.
     println!("Result: {:?}", result);

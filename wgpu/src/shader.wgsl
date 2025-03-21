@@ -11,12 +11,14 @@ var<uniform> globals: Globals;
 var<storage, read> compressed_data: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read> input_vector: array<i32>;
+var<storage, read> input_vector: array<u32>;
 
 @group(0) @binding(3)
-var<storage, read_write> output_vector: array<i32>;
+var<storage, read_write> output_vector: array<u32>;
 
 var<workgroup> ppf: array<u32, 256>;
+
+var<workgroup> input_vector_workgroup: array<u32, 1024>; // TODO: can we make this run-time sized?
 
 // TODO:
 // - use a 64 bit state and decode 4 values at a time
@@ -24,6 +26,7 @@ var<workgroup> ppf: array<u32, 256>;
 // - calculate state update as much as possible in 32 bit, require only one 64 bit MAC
 // - use `dot4I8Packed` to compute the dot product of length-4 slices
 // - then use `subgroupAdd` to sum the results of the dot products across a subgroup
+// - use pointers instead of array indices
 
 // LATER:
 // - interleave compressed data within each subgroup and use `subgroupInclusiveAdd` to calculate cursor increments
@@ -36,7 +39,7 @@ fn mat_vec_mul(
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(subgroup_id) subgroup_id: u32,
     @builtin(subgroup_invocation_id) subgroup_invocation_id: u32,
-    @builtin(subgroup_size) subgroup_size: u32
+    @builtin(subgroup_size) subgroup_size: u32,
 ) {
     // `global_invocation_id.x` ranges from 0 to 4095
     // `subgroup_id` is [16 times 0, 16 times 1, 16 times 2, 16times 3, then repeats: 16 times 0 ...]
@@ -53,6 +56,7 @@ fn mat_vec_mul(
     var quantile = 4 * local_id.x;
     var cursor = globals.cursor;
     var word = compressed_data[cursor];
+    let grid_spacing = f16bits_to_f32(word & 0xFFFF);
     let grid_start = i32(((word >> 16) + 128) & 0xFF) - 128;
     let grid_size = (word >> 24) & 0xFF;
     cursor += 1;
@@ -92,7 +96,7 @@ fn mat_vec_mul(
     var ppf_entry = pack4xU8(vec4(
         left_cdf,
         right_cdf - left_cdf, // `pack4xU8` will truncate this to 8 bits
-        cdf_cursor - 1, // TODO: add `grid_start` (also below)
+        cdf_cursor - 1,
         0
     ));
     ppf[quantile] = ppf_entry;
@@ -113,26 +117,115 @@ fn mat_vec_mul(
         }
         ppf[quantile] = ppf_entry;
     }
-    
 
-    let num_rows = arrayLength(&output_vector);
-    if (global_id.x >= num_rows) {
+
+    if (global_id.x >= globals.output_dim) {
         return;
     }
 
-    // var<workgroup> ppf: array<u32, 256>;
+    // Copy `input_vector` into workgroup memory.
+    // Assume that `globals.input_dim` is a multiple of 4.
+    let workgroup_size = 64u;
+    let start = local_id.x * ((globals.input_dim / 4 + workgroup_size - 1) / workgroup_size);
+    let end = min(start + workgroup_size, globals.input_dim / 4);
+    for (var i = start; i != end; i += 1u) {
+        input_vector_workgroup[i] = input_vector[i];
+    }
+    workgroupBarrier();
 
-    if (global_id.x >= globals.output_dim - 64) {
-        output_vector[globals.output_dim - 256 + 4 * local_id.x] = i32((ppf[4 * local_id.x] >> 16) & 0xFF);
-        output_vector[globals.output_dim - 256 + 4 * local_id.x + 1] = i32((ppf[4 * local_id.x + 1] >> 16) & 0xFF);
-        output_vector[globals.output_dim - 256 + 4 * local_id.x + 2] = i32((ppf[4 * local_id.x + 2] >> 16) & 0xFF);
-        output_vector[globals.output_dim - 256 + 4 * local_id.x + 3] = i32((ppf[4 * local_id.x + 3] >> 16) & 0xFF);
-        // output_vector[global_id.x] = i32((compressed_data[cursor + search_idx] >> (8 * sub_search_index)) & 0xFF);
-    } else if (global_id.x < globals.output_dim - 256) {
-        output_vector[global_id.x] = i32((compressed_data[cursor + 8] / 16) &0xff);
+    // Initialize decoder state.
+
+    let offsets_start = globals.cursor + 1 + (grid_size + 4) / 4;
+    let offset = compressed_data[offsets_start + global_id.x];
+    cursor = offsets_start + globals.output_dim + 1 + offset;
+
+    var state = u64(compressed_data[cursor]) << 32;
+    cursor += 1;
+    state |= u64(compressed_data[cursor]);
+    cursor += 1;
+
+    var accumulator = 0i;
+
+    for (var col = 0u; col != globals.output_dim / 4; col += 1u) {
+        let lower_state = u32(state);
+        state >>= 32;
+
+        let quantiles = unpack4xU8(lower_state);
+
+        let ppf_entry0 = unpack4xU8(ppf[quantiles[0]]);
+        let ppf_entry1 = unpack4xU8(ppf[quantiles[1]]);
+        let ppf_entry2 = unpack4xU8(ppf[quantiles[2]]);
+        let ppf_entry3 = unpack4xU8(ppf[quantiles[3]]);
+
+        let matrix_entries = vec4(
+            i32(ppf_entry0[2]) + grid_start,
+            i32(ppf_entry1[2]) + grid_start,
+            i32(ppf_entry2[2]) + grid_start,
+            i32(ppf_entry3[2]) + grid_start,
+        );
+
+        // TODO: This emulates `dot4I8Packed`, which doesn't seem to be available.
+        // Do we need to request some feature to use it?
+        let input_vector_entries = unpack4xI8(input_vector_workgroup[col]);
+        accumulator += dot(matrix_entries, input_vector_entries);
+
+        // TODO: maybe do this as a single 32-bit subtraction.
+        let remainder0 = quantiles[0] - ppf_entry0[0];
+        let remainder1 = quantiles[1] - ppf_entry1[0];
+        let remainder2 = quantiles[2] - ppf_entry2[0];
+        let remainder3 = quantiles[3] - ppf_entry3[0];
+
+        var full_remainder = remainder0 * ppf_entry1[1];
+        full_remainder += remainder1;
+        full_remainder *= ppf_entry2[1];
+        full_remainder += remainder2;
+        full_remainder *= ppf_entry3[1];
+        full_remainder += remainder3;
+
+        let full_probability = ppf_entry0[1] * ppf_entry1[1] * ppf_entry2[1] * ppf_entry3[1];
+
+        state = u64(full_probability) * state + u64(full_remainder);
+
+        if (state >> 32 == 0) {
+            // Refill the state as soon as we can.
+            state = (state << 32) | u64(compressed_data[cursor]);
+            cursor += 1;
+        }
     }
 
-    // output_vector[global_id.x] = i32(
-    //     (compressed_data[cursor + global_id.x / 4] >> ((global_id.x % 4) * 8)) & 0xff
-    // );
+    let result = u32(i32(round(f32(accumulator) * grid_spacing))) & 0xff;
+    let next_result = subgroupShuffleDown(result, 1u);
+    let pair = (next_result << 8) | result;
+    let next_pair = subgroupShuffleDown(pair, 2u);
+    if (global_id.x % 4 == 0) {
+        output_vector[global_id.x / 4] = (next_pair << 16) | pair;
+    }
+}
+
+// Emulate the conversion from 16-bit float to 32-bit float for platforms that
+// don't support f16 natively. Assumes that the input is neither NaN nor infinity.
+fn f16bits_to_f32(x: u32) -> f32 {
+    let sign = x >> 15;
+    let exponent = (x >> 10) & 0x1F;
+    let mantissa = x & 0x3FF;
+
+    var f32_exponent: u32;
+    var f32_mantissa: u32;
+
+    if (exponent == 0) {
+        if (mantissa == 0) {
+            return 0.0;
+        } else {
+            let leading_zeros = countLeadingZeros(mantissa);
+            f32_exponent = 134 - leading_zeros;
+            f32_mantissa = (mantissa << (leading_zeros - 8)) & 0x007FFFFF;
+        }
+    } else {
+        // Assume that the input is neither NaN nor infinity.
+        f32_exponent = exponent + 112;
+        f32_mantissa = mantissa << 13;
+    };
+
+    let f32_bits = (sign << 31) | (f32_exponent << 23) | f32_mantissa;
+    return bitcast<f32>(f32_bits);
 }
