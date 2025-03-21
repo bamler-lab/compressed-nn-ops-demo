@@ -1,4 +1,3 @@
-use core::num;
 use std::{io::Read, num::NonZeroU64, path::PathBuf};
 
 use anyhow::Result;
@@ -123,7 +122,7 @@ fn main() -> Result<()> {
     }
 
     let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: None,
+        label: Some("globals_buffer"),
         contents: &globals,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, // TODO: is COPY_DST necessary?
     });
@@ -137,7 +136,7 @@ fn main() -> Result<()> {
     )[0] = file_header.dimensions[file_header.num_matrices() as usize];
 
     let copy_dims_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: None,
+        label: Some("copy_dims_buffer"),
         contents: &copy_dims,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, // TODO: is COPY_DST necessary?
     });
@@ -145,13 +144,13 @@ fn main() -> Result<()> {
     let mut compressed_data = vec![0; compressed_len as usize];
     reader.read_exact(&mut compressed_data[..])?;
     let compressed_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: None,
+        label: Some("compressed_data_buffer"),
         contents: &compressed_data,
         usage: wgpu::BufferUsages::STORAGE,
     });
 
     let input_vector_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: None,
+        label: Some("input_vector_buffer"),
         contents: bytemuck::cast_slice(&input_vector.0),
         usage: wgpu::BufferUsages::STORAGE,
     });
@@ -163,21 +162,21 @@ fn main() -> Result<()> {
         .expect("input vector must be present");
 
     let vector_a_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
+        label: Some("vector_a_buffer"),
         size: max_vec_dimension as u64,
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
 
     let vector_b_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
+        label: Some("vector_b_buffer"),
         size: max_vec_dimension as u64,
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
 
     let output_vector_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
+        label: Some("output_vector_buffer"),
         size: file_header.dimensions[file_header.num_matrices() as usize] as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
@@ -188,7 +187,7 @@ fn main() -> Result<()> {
     // and that usage can only be used with `COPY_DST`.
     // TODO: this comment is outdated
     let download_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
+        label: Some("download_buffer"),
         size: file_header.dimensions[1] as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
@@ -429,128 +428,133 @@ fn main() -> Result<()> {
         cache: None,                                                      // TODO
     });
 
-    // The command encoder allows us to record commands that we will later submit to the GPU.
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    for _ in 0..10 {
+        let start_time = std::time::Instant::now();
+        // The command encoder allows us to record commands that we will later submit to the GPU.
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-    // Copy the input vector into `vector_a` (not sure if this detour is necessary).
-    let mut compute_pass_copy_in = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        label: None,
-        timestamp_writes: None,
-    });
-    compute_pass_copy_in.set_pipeline(&pipeline_copy);
-    compute_pass_copy_in.set_bind_group(0, &bind_group_copy_in, &[0]);
-    let workgroup_count = file_header.dimensions[0].div_ceil(WORKGROUP_SIZE);
-    compute_pass_copy_in.dispatch_workgroups(workgroup_count, 1, 1);
-    drop(compute_pass_copy_in);
-
-    let mut k = 0;
-    loop {
-        // Perform the first matrix-vector multiplication.
-        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        // Copy the input vector into `vector_a` (not sure if this detour is necessary).
+        let mut compute_pass_copy_in = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
             timestamp_writes: None,
         });
-        compute_pass.set_pipeline(&pipeline);
-        compute_pass.set_bind_group(0, &bind_group_even, &[k * globals_alignment]);
-        let workgroup_count = file_header.dimensions[k as usize + 1].div_ceil(WORKGROUP_SIZE);
-        compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
-        drop(compute_pass);
+        compute_pass_copy_in.set_pipeline(&pipeline_copy);
+        compute_pass_copy_in.set_bind_group(0, &bind_group_copy_in, &[0]);
+        let workgroup_count = file_header.dimensions[0].div_ceil(WORKGROUP_SIZE);
+        compute_pass_copy_in.dispatch_workgroups(workgroup_count, 1, 1);
+        drop(compute_pass_copy_in);
 
-        k += 1;
-        if k == file_header.num_matrices() {
-            break;
+        let mut k = 0;
+        loop {
+            // Perform the first matrix-vector multiplication.
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group_even, &[k * globals_alignment]);
+            let workgroup_count = file_header.dimensions[k as usize + 1].div_ceil(WORKGROUP_SIZE);
+            compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+            drop(compute_pass);
+
+            k += 1;
+            if k == file_header.num_matrices() {
+                break;
+            }
+
+            // Perform the second matrix-vector multiplication.
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group_odd, &[k * globals_alignment]);
+            let workgroup_count = file_header.dimensions[k as usize + 1].div_ceil(WORKGROUP_SIZE);
+            compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+            drop(compute_pass);
+
+            k += 1;
+            if k == file_header.num_matrices() {
+                break;
+            }
         }
 
-        // Perform the second matrix-vector multiplication.
-        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        // Copy the result to a buffer that is marked for `COPY_SRC` usage.
+        let mut compute_pass_copy_out = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
             timestamp_writes: None,
         });
-        compute_pass.set_pipeline(&pipeline);
-        compute_pass.set_bind_group(0, &bind_group_odd, &[k * globals_alignment]);
-        let workgroup_count = file_header.dimensions[k as usize + 1].div_ceil(WORKGROUP_SIZE);
-        compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
-        drop(compute_pass);
+        compute_pass_copy_out.set_pipeline(&pipeline_copy);
+        compute_pass_copy_out.set_bind_group(0, &bind_group_copy_out, &[copy_dim_alignment]);
+        let workgroup_count = file_header.dimensions[0].div_ceil(WORKGROUP_SIZE);
+        compute_pass_copy_out.dispatch_workgroups(workgroup_count, 1, 1);
+        drop(compute_pass_copy_out);
 
-        k += 1;
-        if k == file_header.num_matrices() {
-            break;
-        }
+        // Download the result from the GPU to the CPU.
+        encoder.copy_buffer_to_buffer(
+            &output_vector_buffer,
+            0,
+            &download_buffer,
+            0,
+            file_header.dimensions[file_header.num_matrices() as usize] as u64,
+        );
+
+        // We finish the encoder, giving us a fully recorded command buffer.
+        let command_buffer = encoder.finish();
+
+        // At this point nothing has actually been executed on the gpu. We have recorded a series of
+        // commands that we want to execute, but they haven't been sent to the gpu yet.
+        //
+        // Submitting to the queue sends the command buffer to the gpu. The gpu will then execute the
+        // commands in the command buffer in order.
+        queue.submit([command_buffer]);
+
+        // We now map the download buffer so we can read it. Mapping tells wgpu that we want to read/write
+        // to the buffer directly by the CPU and it should not permit any more GPU operations on the buffer.
+        //
+        // Mapping requires that the GPU be finished using the buffer before it resolves, so mapping has a callback
+        // to tell you when the mapping is complete.
+        let buffer_slice = download_buffer.slice(..);
+        buffer_slice.map_async(wgpu::MapMode::Read, |_| {
+            // In this case we know exactly when the mapping will be finished,
+            // so we don't need to do anything in the callback.
+            // TODO: what does this mean?
+        });
+
+        // Wait for the GPU to finish working on the submitted work. This doesn't work on WebGPU, so we would need
+        // to rely on the callback to know when the buffer is mapped.
+        device.poll(wgpu::Maintain::Wait);
+
+        // We can now read the data from the buffer.
+        let data = buffer_slice.get_mapped_range();
+        let result: &[i8] = bytemuck::cast_slice(&data);
+        dbg!(result[0]);
+        drop(data);
+        download_buffer.unmap();
+        let end_time = std::time::Instant::now();
+
+        // Print out the result.
+        // println!("Result: {:?}", result);
+
+        let duration = end_time - start_time;
+        let num_matrix_elements = file_header
+            .dimensions
+            .iter()
+            .zip(file_header.dimensions.iter().skip(1))
+            .map(|(a, b)| (a * b) as u64)
+            .sum::<u64>();
+        let throughput = num_matrix_elements as f64 / duration.as_secs_f64();
+        println!(
+            "Duration for {} matrix multiplications: {:?}",
+            file_header.num_matrices(),
+            duration
+        );
+        println!(
+            "Throughput: {throughput:.4e} elements/second (for {num_matrix_elements:.4e} elements)"
+        );
+        println!();
     }
-
-    // Copy the result to a buffer that is marked for `COPY_SRC` usage.
-    let mut compute_pass_copy_out = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        label: None,
-        timestamp_writes: None,
-    });
-    compute_pass_copy_out.set_pipeline(&pipeline_copy);
-    compute_pass_copy_out.set_bind_group(0, &bind_group_copy_out, &[copy_dim_alignment]);
-    let workgroup_count = file_header.dimensions[0].div_ceil(WORKGROUP_SIZE);
-    compute_pass_copy_out.dispatch_workgroups(workgroup_count, 1, 1);
-    drop(compute_pass_copy_out);
-
-    // Download the result from the GPU to the CPU.
-    encoder.copy_buffer_to_buffer(
-        &output_vector_buffer,
-        0,
-        &download_buffer,
-        0,
-        file_header.dimensions[file_header.num_matrices() as usize] as u64,
-    );
-
-    // We finish the encoder, giving us a fully recorded command buffer.
-    let command_buffer = encoder.finish();
-
-    // At this point nothing has actually been executed on the gpu. We have recorded a series of
-    // commands that we want to execute, but they haven't been sent to the gpu yet.
-    //
-    // Submitting to the queue sends the command buffer to the gpu. The gpu will then execute the
-    // commands in the command buffer in order.
-    let start_time = std::time::Instant::now();
-    queue.submit([command_buffer]);
-
-    // We now map the download buffer so we can read it. Mapping tells wgpu that we want to read/write
-    // to the buffer directly by the CPU and it should not permit any more GPU operations on the buffer.
-    //
-    // Mapping requires that the GPU be finished using the buffer before it resolves, so mapping has a callback
-    // to tell you when the mapping is complete.
-    let buffer_slice = download_buffer.slice(..);
-    buffer_slice.map_async(wgpu::MapMode::Read, |_| {
-        // In this case we know exactly when the mapping will be finished,
-        // so we don't need to do anything in the callback.
-        // TODO: what does this mean?
-    });
-
-    // Wait for the GPU to finish working on the submitted work. This doesn't work on WebGPU, so we would need
-    // to rely on the callback to know when the buffer is mapped.
-    device.poll(wgpu::Maintain::Wait);
-
-    // We can now read the data from the buffer.
-    let data = buffer_slice.get_mapped_range();
-    let result: &[i8] = bytemuck::cast_slice(&data);
-    dbg!(result[0]);
-    let end_time = std::time::Instant::now();
-
-    // Print out the result.
-    println!("Result: {:?}", result);
-
-    let duration = end_time - start_time;
-    let num_matrix_elements = file_header
-        .dimensions
-        .iter()
-        .zip(file_header.dimensions.iter().skip(1))
-        .map(|(a, b)| (a * b) as u64)
-        .sum::<u64>();
-    let throughput = num_matrix_elements as f64 / duration.as_secs_f64();
-    println!(
-        "Duration for {} matrix multiplications: {:?}",
-        file_header.num_matrices(),
-        duration
-    );
-    println!(
-        "Throughput: {throughput:.4e} elements/second (for {num_matrix_elements:.4e} elements)"
-    );
 
     Ok(())
 }
