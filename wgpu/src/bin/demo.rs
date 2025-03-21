@@ -1,3 +1,4 @@
+use core::num;
 use std::{io::Read, num::NonZeroU64, path::PathBuf};
 
 use anyhow::Result;
@@ -17,7 +18,17 @@ struct Cli {
     verbose: clap_verbosity_flag::Verbosity,
 }
 
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct Globals {
+    cursor: u32,
+    input_dim: u32,
+    output_dim: u32,
+}
+
 fn main() -> Result<()> {
+    const WORKGROUP_SIZE: u32 = 64;
+
     let cli = Cli::parse();
 
     // wgpu uses `log` rather than `tracing`, so we'll use that too.
@@ -38,18 +49,7 @@ fn main() -> Result<()> {
 
     // Print out some basic information about the adapter.
     info!("Running on Adapter: {:#?}", adapter.get_info());
-
-    let limits = adapter.limits();
-
-    dbg!(limits.max_compute_workgroup_storage_size);
-    dbg!(limits.max_compute_invocations_per_workgroup);
-    dbg!(limits.max_compute_workgroup_size_x);
-    dbg!(limits.max_compute_workgroup_size_y);
-    dbg!(limits.max_compute_workgroup_size_z);
-    dbg!(limits.max_compute_workgroups_per_dimension);
-    dbg!(limits.min_subgroup_size);
-    dbg!(limits.max_subgroup_size);
-    dbg!(limits.max_push_constant_size);
+    dbg!(adapter.limits());
 
     let downlevel_capabilities = adapter.get_downlevel_capabilities();
     dbg!(&downlevel_capabilities);
@@ -60,17 +60,24 @@ fn main() -> Result<()> {
         panic!("Adapter does not support compute shaders");
     }
 
+    let compressed_len = file_header.offsets_and_file_size[file_header.num_matrices() as usize]
+        - file_header.offsets_and_file_size[0];
+
+    let mut required_limits = wgpu::Limits::downlevel_defaults();
+    required_limits.max_storage_buffer_binding_size = compressed_len;
+    required_limits.max_buffer_size = compressed_len as u64;
+    required_limits.min_uniform_buffer_offset_alignment =
+        adapter.limits().min_uniform_buffer_offset_alignment;
+
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: None,
-
             // TODO: try `PIPELINE_STATISTICS_QUERY` and `TIMESTAMP_QUERY_INSIDE_*`.
             // TODO: try `MAPPABLE_PRIMARY_BUFFERS` (with caution)
-            // TODO (important): try `SUBGROUP` and `SUBGROUP_BARRIER`
             required_features: wgpu::Features::SUBGROUP
                 | wgpu::Features::SUBGROUP_BARRIER
                 | wgpu::Features::SHADER_INT64,
-            required_limits: wgpu::Limits::downlevel_defaults(), // TODO: sets `{min, max}_subgroup_size` to 0
+            required_limits,
             memory_hints: wgpu::MemoryHints::Performance,
         },
         None,
@@ -89,24 +96,57 @@ fn main() -> Result<()> {
         source: wgpu::ShaderSource::Wgsl(shader_code.into()),
     });
 
-    let globals = [
-        0,                                // cursor
-        file_header.dimensions[0] as u32, // input dimension
-        file_header.dimensions[1] as u32, // output dimension
-    ];
-    let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let mut shader_file_copy = std::fs::File::open("src/shader_copy.wgsl")?;
+    let mut shader_code_copy = String::new();
+    shader_file_copy.read_to_string(&mut shader_code_copy)?;
+    // let module = device.create_shader_module(wgpu::include_wgsl!("../shader.wgsl"));
+    let module_copy = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
-        contents: bytemuck::cast_slice(&globals),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        source: wgpu::ShaderSource::Wgsl(shader_code_copy.into()),
     });
 
-    let mut compressed_data = vec![0; file_header.max_compressed_matrix_size as usize];
-    let compressed_len =
-        (file_header.offsets_and_file_size[1] - file_header.offsets_and_file_size[0]) as usize;
-    reader.read_exact(&mut compressed_data[0..compressed_len])?;
+    let globals_alignment = (size_of::<Globals>() as u32)
+        .next_multiple_of(adapter.limits().min_uniform_buffer_offset_alignment);
+    let mut globals = vec![0u8; (globals_alignment * file_header.num_matrices()) as usize];
+    for (i, globals) in globals
+        .chunks_exact_mut(globals_alignment as usize)
+        .enumerate()
+    {
+        let globals: &mut [Globals] =
+            bytemuck::cast_slice_mut(&mut globals[0..size_of::<Globals>()]);
+        globals[0] = Globals {
+            cursor: (file_header.offsets_and_file_size[i] - file_header.offsets_and_file_size[0])
+                / 4,
+            input_dim: file_header.dimensions[i],
+            output_dim: file_header.dimensions[i + 1],
+        };
+    }
+
+    let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: &globals,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, // TODO: is COPY_DST necessary?
+    });
+
+    let copy_dim_alignment = (size_of::<u32>() as u32)
+        .next_multiple_of(adapter.limits().min_uniform_buffer_offset_alignment);
+    let mut copy_dims = vec![0u8; (copy_dim_alignment * 2) as usize];
+    bytemuck::cast_slice_mut(&mut copy_dims[0..4])[0] = file_header.dimensions[0];
+    bytemuck::cast_slice_mut(
+        &mut copy_dims[copy_dim_alignment as usize..copy_dim_alignment as usize + 4],
+    )[0] = file_header.dimensions[file_header.num_matrices() as usize];
+
+    let copy_dims_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: &copy_dims,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, // TODO: is COPY_DST necessary?
+    });
+
+    let mut compressed_data = vec![0; compressed_len as usize];
+    reader.read_exact(&mut compressed_data[..])?;
     let compressed_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
-        contents: &compressed_data[0..compressed_len],
+        contents: &compressed_data,
         usage: wgpu::BufferUsages::STORAGE,
     });
 
@@ -116,16 +156,29 @@ fn main() -> Result<()> {
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    // let ppf_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-    //     label: None,
-    //     size: header.input_vector.len() as u64,
-    //     usage: wgpu::BufferUsages::STORAGE,
-    //     mapped_at_creation: false,
-    // });
+    let max_vec_dimension = *file_header
+        .dimensions
+        .iter()
+        .max()
+        .expect("input vector must be present");
+
+    let vector_a_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: max_vec_dimension as u64,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+
+    let vector_b_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: max_vec_dimension as u64,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
 
     let output_vector_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: file_header.dimensions[1] as u64,
+        size: file_header.dimensions[file_header.num_matrices() as usize] as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
@@ -133,6 +186,7 @@ fn main() -> Result<()> {
     // Finally we create a buffer which can be read by the CPU. This buffer is how we will read
     // the data. We need to use a separate buffer because we need to have a usage of `MAP_READ`,
     // and that usage can only be used with `COPY_DST`.
+    // TODO: this comment is outdated
     let download_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: file_header.dimensions[1] as u64,
@@ -140,11 +194,51 @@ fn main() -> Result<()> {
         mapped_at_creation: false,
     });
 
+    let bind_group_layout_copy =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("copy bind group layout"),
+            entries: &[
+                // `copy_dims_buffer`
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        min_binding_size: Some(NonZeroU64::new(4).unwrap()),
+                        has_dynamic_offset: true,
+                    },
+                    count: None,
+                },
+                // source
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        min_binding_size: None,
+                        has_dynamic_offset: false,
+                    },
+                    count: None,
+                },
+                // destination
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        min_binding_size: None,
+                        has_dynamic_offset: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
     // A bind group layout describes the types of resources that a bind group can contain. Think
     // of this like a C-style header declaration, ensuring both the pipeline and bind group agree
     // on the types of resources.
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: None,
+        label: Some("mul bind group layout"),
         entries: &[
             // `globals_buffer`
             wgpu::BindGroupLayoutEntry {
@@ -152,26 +246,24 @@ fn main() -> Result<()> {
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
-                    min_binding_size: Some(
-                        NonZeroU64::new((globals.len() * size_of::<u32>()) as u64).unwrap(),
-                    ),
-                    has_dynamic_offset: false,
+                    min_binding_size: Some(NonZeroU64::new(globals_alignment as u64).unwrap()),
+                    has_dynamic_offset: true,
                 },
                 count: None,
             },
-            // `input_data_buffer`
+            // `compressed_data_buffer`
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    ty: wgpu::BufferBindingType::Storage { read_only: true }, // TODO: we could make this a uniform buffer, but I'm not sure if that would make it any faster
                     // This is the size of a single element in the buffer.
                     min_binding_size: Some(NonZeroU64::new(size_of::<u32>() as u64).unwrap()), // TODO: what is this for?
-                    has_dynamic_offset: false, // TODO: can we use this?
+                    has_dynamic_offset: false,
                 },
                 count: None,
             },
-            // `input_vector_buffer`
+            // input vector
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -183,7 +275,7 @@ fn main() -> Result<()> {
                 },
                 count: None,
             },
-            // `output_vector_buffer`
+            // output vector
             wgpu::BindGroupLayoutEntry {
                 binding: 3,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -201,13 +293,17 @@ fn main() -> Result<()> {
     //
     // Even when the buffers are individually dropped, wgpu will keep the bind group and buffers
     // alive until the bind group itself is dropped.
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
+    let bind_group_even = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("even"),
         layout: &bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: globals_buffer.as_entire_binding(),
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &globals_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(globals_alignment as u64).unwrap()),
+                }),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -215,10 +311,86 @@ fn main() -> Result<()> {
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: input_vector_buffer.as_entire_binding(),
+                resource: vector_a_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
+                resource: vector_b_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let bind_group_odd = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("odd"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &globals_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(globals_alignment as u64).unwrap()),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: compressed_data_buffer.as_entire_binding(), // TODO: try `.slice()` instead.
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: vector_b_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: vector_a_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let bind_group_copy_in = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("copy_in"),
+        layout: &bind_group_layout_copy,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &copy_dims_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(copy_dim_alignment as u64).unwrap()),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: input_vector_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: vector_a_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let bind_group_copy_out = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout_copy,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &copy_dims_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(copy_dim_alignment as u64).unwrap()),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: [&vector_a_buffer, &vector_b_buffer]
+                    [(file_header.num_matrices() % 2) as usize]
+                    .as_entire_binding(),
+                // resource: vector_b_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
                 resource: output_vector_buffer.as_entire_binding(),
             },
         ],
@@ -228,6 +400,12 @@ fn main() -> Result<()> {
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
         bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[], // TODO
+    });
+
+    let pipeline_layout_copy = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&bind_group_layout_copy],
         push_constant_ranges: &[], // TODO
     });
 
@@ -242,37 +420,83 @@ fn main() -> Result<()> {
         cache: None,                                                      // TODO
     });
 
+    let pipeline_copy = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout_copy),
+        module: &module_copy,
+        entry_point: Some("copy"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(), // TODO: set `zero_initialize_workgroup_memory = false`
+        cache: None,                                                      // TODO
+    });
+
     // The command encoder allows us to record commands that we will later submit to the GPU.
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-    // A compute pass is a single series of compute operations. While we are recording a compute
-    // pass, we cannot record to the encoder.
-    let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+    // Copy the input vector into `vector_a` (not sure if this detour is necessary).
+    let mut compute_pass_copy_in = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: None,
         timestamp_writes: None,
     });
+    compute_pass_copy_in.set_pipeline(&pipeline_copy);
+    compute_pass_copy_in.set_bind_group(0, &bind_group_copy_in, &[0]);
+    let workgroup_count = file_header.dimensions[0].div_ceil(WORKGROUP_SIZE);
+    compute_pass_copy_in.dispatch_workgroups(workgroup_count, 1, 1);
+    drop(compute_pass_copy_in);
 
-    // Set the pipeline that we want to use
-    compute_pass.set_pipeline(&pipeline);
-    // Set the bind group that we want to use
-    compute_pass.set_bind_group(0, &bind_group, &[]);
+    let mut k = 0;
+    loop {
+        // Perform the first matrix-vector multiplication.
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+        compute_pass.set_pipeline(&pipeline);
+        compute_pass.set_bind_group(0, &bind_group_even, &[k * globals_alignment]);
+        let workgroup_count = file_header.dimensions[k as usize + 1].div_ceil(WORKGROUP_SIZE);
+        compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+        drop(compute_pass);
 
-    const WORKGROUP_SIZE: u32 = 64;
-    let workgroup_count = file_header.dimensions[1].div_ceil(WORKGROUP_SIZE);
-    compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+        k += 1;
+        if k == file_header.num_matrices() {
+            break;
+        }
 
-    // Now we drop the compute pass, giving us access to the encoder again.
-    drop(compute_pass);
+        // Perform the second matrix-vector multiplication.
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+        compute_pass.set_pipeline(&pipeline);
+        compute_pass.set_bind_group(0, &bind_group_odd, &[k * globals_alignment]);
+        let workgroup_count = file_header.dimensions[k as usize + 1].div_ceil(WORKGROUP_SIZE);
+        compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+        drop(compute_pass);
 
-    // We add a copy operation to the encoder. This will copy the data from the output buffer on the
-    // GPU to the download buffer on the CPU.
+        k += 1;
+        if k == file_header.num_matrices() {
+            break;
+        }
+    }
+
+    // Copy the result to a buffer that is marked for `COPY_SRC` usage.
+    let mut compute_pass_copy_out = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: None,
+        timestamp_writes: None,
+    });
+    compute_pass_copy_out.set_pipeline(&pipeline_copy);
+    compute_pass_copy_out.set_bind_group(0, &bind_group_copy_out, &[copy_dim_alignment]);
+    let workgroup_count = file_header.dimensions[0].div_ceil(WORKGROUP_SIZE);
+    compute_pass_copy_out.dispatch_workgroups(workgroup_count, 1, 1);
+    drop(compute_pass_copy_out);
+
+    // Download the result from the GPU to the CPU.
     encoder.copy_buffer_to_buffer(
         &output_vector_buffer,
         0,
         &download_buffer,
         0,
-        output_vector_buffer.size(),
+        file_header.dimensions[file_header.num_matrices() as usize] as u64,
     );
 
     // We finish the encoder, giving us a fully recorded command buffer.
@@ -283,6 +507,7 @@ fn main() -> Result<()> {
     //
     // Submitting to the queue sends the command buffer to the gpu. The gpu will then execute the
     // commands in the command buffer in order.
+    let start_time = std::time::Instant::now();
     queue.submit([command_buffer]);
 
     // We now map the download buffer so we can read it. Mapping tells wgpu that we want to read/write
@@ -304,9 +529,28 @@ fn main() -> Result<()> {
     // We can now read the data from the buffer.
     let data = buffer_slice.get_mapped_range();
     let result: &[i8] = bytemuck::cast_slice(&data);
+    dbg!(result[0]);
+    let end_time = std::time::Instant::now();
 
     // Print out the result.
     println!("Result: {:?}", result);
+
+    let duration = end_time - start_time;
+    let num_matrix_elements = file_header
+        .dimensions
+        .iter()
+        .zip(file_header.dimensions.iter().skip(1))
+        .map(|(a, b)| (a * b) as u64)
+        .sum::<u64>();
+    let throughput = num_matrix_elements as f64 / duration.as_secs_f64();
+    println!(
+        "Duration for {} matrix multiplications: {:?}",
+        file_header.num_matrices(),
+        duration
+    );
+    println!(
+        "Throughput: {throughput:.4e} elements/second (for {num_matrix_elements:.4e} elements)"
+    );
 
     Ok(())
 }

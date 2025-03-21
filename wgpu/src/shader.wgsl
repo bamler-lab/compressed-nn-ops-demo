@@ -37,9 +37,9 @@ var<workgroup> input_vector_workgroup: array<u32, 1024>; // TODO: can we make th
 fn mat_vec_mul(
     @builtin(global_invocation_id) global_id: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
-    @builtin(subgroup_id) subgroup_id: u32,
-    @builtin(subgroup_invocation_id) subgroup_invocation_id: u32,
-    @builtin(subgroup_size) subgroup_size: u32,
+    // @builtin(subgroup_id) subgroup_id: u32,
+    // @builtin(subgroup_invocation_id) subgroup_invocation_id: u32,
+    // @builtin(subgroup_size) subgroup_size: u32,
 ) {
     // `global_invocation_id.x` ranges from 0 to 4095
     // `subgroup_id` is [16 times 0, 16 times 1, 16 times 2, 16times 3, then repeats: 16 times 0 ...]
@@ -199,6 +199,7 @@ fn mat_vec_mul(
     let next_pair = subgroupShuffleDown(pair, 2u);
     if (global_id.x % 4 == 0) {
         output_vector[global_id.x / 4] = (next_pair << 16) | pair;
+        // output_vector[global_id.x / 4] = u32(i32(grid_start) + 10000);
     }
 }
 
