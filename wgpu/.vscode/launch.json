@@ -77,8 +77,6 @@
             },
             "args": [
                 "-v",
-                "-k2",
-                "-d16",
                 "testmatrices.bin"
             ],
             "cwd": "${workspaceFolder}"
@@ -119,8 +117,29 @@
             },
             "args": [
                 "-v",
-                "-k2",
-                "-d16",
+                "testmatrices.bin"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'demo' in debug mode",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=demo",
+                    "--package=compressed_mat_vec_mul"
+                ],
+                "filter": {
+                    "name": "demo",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "-v",
+                "--debug",
+                "gpu.safetensors",
                 "testmatrices.bin"
             ],
             "cwd": "${workspaceFolder}"

@@ -1,10 +1,11 @@
-use std::{io::Seek, path::PathBuf};
+use std::{collections::HashMap, io::Seek, path::PathBuf};
 
 use anyhow::{Result, bail};
 use clap::Parser;
 
 use compressed_mat_vec_mul::{
-    CompressedMatrix, FileHeader, RngSeeder, UncompressedMatrix, UncompressedVector,
+    CompressedMatrix, FileHeader, OwnedSafetensor, RngSeeder, UncompressedMatrix,
+    UncompressedVector,
 };
 
 #[derive(Parser)]
@@ -31,6 +32,17 @@ struct Cli {
     /// `num_matrices` and `dim` will be used as a seed to ensure reproducibility.
     #[arg(long, default_value = "20250319")]
     seed: u64,
+
+    /// Write the input vector, all intermediate vectors, and the final result to the provided file
+    /// in `safetensors` format. If the file already exists it will be overwritten. Otherwise, a new
+    /// file will be created.
+    #[arg(long)]
+    debug: Option<PathBuf>,
+
+    /// Include the (uncompressed) matrices in the debug file (requires `--debug`). This is turned
+    /// off by default because it can lead to a fairly large debug file.
+    #[arg(long, requires = "debug")]
+    debug_matrices: bool,
 
     #[command(flatten)]
     verbose: clap_verbosity_flag::Verbosity,
@@ -81,6 +93,12 @@ fn main() -> Result<()> {
             .expect("valid template"),
     );
 
+    let mut debug_data = cli.debug.map(|debug_path| {
+        let mut debug_data = HashMap::with_capacity(cli.num_matrices as usize + 1);
+        debug_data.insert("vector_0".to_string(), input_vector.into_owned_safetensor());
+        (debug_path, debug_data)
+    });
+
     for k in 0..cli.num_matrices {
         progress_bar.set_position(k as u64);
         reader.seek(std::io::SeekFrom::Start(
@@ -99,6 +117,27 @@ fn main() -> Result<()> {
         let uncompressed = compressed.to_uncompressed(cli.dim);
 
         assert!(uncompressed == uncompressed_ground_truth); // Don't use `assert_eq!` because matrices are too big to print.
+
+        if let Some((_, debug_data)) = &mut debug_data {
+            if cli.debug_matrices {
+                debug_data.insert(
+                    format!("grid_spacing_{}", k),
+                    OwnedSafetensor::from_scalar_f32(uncompressed.grid_spacing().to_f32()),
+                );
+                debug_data.insert(
+                    format!("matrix_{}", k),
+                    uncompressed.into_owned_safetensor(),
+                );
+            }
+            debug_data.insert(
+                format!("vector_{}", k + 1),
+                intermediate_vector.clone().into_owned_safetensor(),
+            );
+        }
+    }
+
+    if let Some((debug_path, debug_data)) = debug_data {
+        safetensors::serialize_to_file(debug_data, &None, &debug_path)?;
     }
 
     progress_bar.finish();

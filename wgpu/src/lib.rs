@@ -51,6 +51,44 @@ pub struct CompressedMatrix {
     compressed_data: Box<[u32]>,
 }
 
+#[derive(Clone, Debug)]
+pub struct OwnedSafetensor {
+    dtype: safetensors::Dtype,
+    shape: Box<[usize]>,
+    data: Box<[u8]>,
+    data_len: usize,
+}
+
+impl OwnedSafetensor {
+    pub fn from_scalar_f32(scalar: f32) -> Self {
+        let data = Box::new(scalar.to_le_bytes());
+        OwnedSafetensor {
+            dtype: safetensors::Dtype::F32,
+            shape: vec![].into_boxed_slice(),
+            data,
+            data_len: std::mem::size_of::<f32>(),
+        }
+    }
+}
+
+impl safetensors::View for OwnedSafetensor {
+    fn dtype(&self) -> safetensors::Dtype {
+        self.dtype
+    }
+
+    fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn data(&self) -> std::borrow::Cow<[u8]> {
+        bytemuck::cast_slice(&self.data).into()
+    }
+
+    fn data_len(&self) -> usize {
+        self.data_len
+    }
+}
+
 impl FileHeader {
     pub fn stump(num_matrices: u32, constant_dimension: u32) -> Self {
         Self {
@@ -129,6 +167,16 @@ impl UncompressedVector {
 
         Ok((self.0.len() + num_padding) as u32)
     }
+
+    pub fn into_owned_safetensor(self) -> OwnedSafetensor {
+        let len = self.0.len();
+        OwnedSafetensor {
+            dtype: safetensors::Dtype::I8,
+            shape: vec![len].into_boxed_slice(),
+            data: bytemuck::allocation::cast_vec(self.0).into_boxed_slice(),
+            data_len: len,
+        }
+    }
 }
 
 impl UncompressedMatrix {
@@ -170,7 +218,7 @@ impl UncompressedMatrix {
 
         intermediate_vector.0.resize(rows as usize, 0);
         for (&src, dst) in output_vec.iter().zip(&mut intermediate_vector.0) {
-            *dst = (grid_spacing_f32 * src as f32).round() as i8;
+            *dst = (grid_spacing_f32 * src as f32).round_ties_even() as i8;
         }
 
         Ok(Self {
@@ -179,6 +227,20 @@ impl UncompressedMatrix {
             grid_spacing,
             data,
         })
+    }
+
+    pub fn into_owned_safetensor(self) -> OwnedSafetensor {
+        let len = self.data.len();
+        OwnedSafetensor {
+            dtype: safetensors::Dtype::I8,
+            shape: vec![self.rows as usize, self.cols as usize].into_boxed_slice(),
+            data: bytemuck::allocation::cast_slice_box(self.data),
+            data_len: len,
+        }
+    }
+
+    pub fn grid_spacing(&self) -> SimpleF16 {
+        self.grid_spacing
     }
 }
 
