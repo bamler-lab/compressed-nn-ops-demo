@@ -119,10 +119,6 @@ fn mat_vec_mul(
     }
 
 
-    if (global_id.x >= globals.output_dim) {
-        return;
-    }
-
     // Copy `input_vector` into workgroup memory.
     // Assume that `globals.input_dim` is a multiple of 4.
     let workgroup_size = 64u;
@@ -132,6 +128,10 @@ fn mat_vec_mul(
         input_vector_workgroup[i] = input_vector[i];
     }
     workgroupBarrier();
+
+    if (global_id.x >= globals.output_dim) {
+        return;
+    }
 
     // Initialize decoder state.
 
