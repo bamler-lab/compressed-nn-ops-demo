@@ -29,6 +29,10 @@ struct Cli {
     #[arg(short, long, default_value = "4.0")]
     std: f64,
 
+    /// Write the matrices in uncompressed form. This is meant for baseline performance testing.
+    #[arg(long)]
+    uncompressed: bool,
+
     /// The seed to use for the random number generator. If not provided, a hash of the matrix
     /// `num_matrices` and `dim` will be used as a seed to ensure reproducibility. Set to zero to
     /// use a random seed.
@@ -90,9 +94,13 @@ fn main() -> Result<()> {
             rng_seeder.rng(("matrix", k)),
         )?;
 
-        let compressed = CompressedMatrix::from_uncompressed(&uncompressed);
+        let bytes_written = if cli.uncompressed {
+            uncompressed.to_write(&mut writer)?
+        } else {
+            let compressed = CompressedMatrix::from_uncompressed(&uncompressed);
+            compressed.to_write(&mut writer)?
+        };
 
-        let bytes_written = compressed.to_write(&mut writer)?;
         cursor += bytes_written;
         if bytes_written as u32 > file_header.max_compressed_matrix_size {
             file_header.max_compressed_matrix_size = bytes_written as u32;

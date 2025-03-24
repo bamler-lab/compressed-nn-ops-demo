@@ -33,6 +33,10 @@ struct Cli {
     #[arg(long, default_value = "20250319")]
     seed: u64,
 
+    /// Matrices are stored in uncompressed form. This is meant for baseline performance testing.
+    #[arg(long)]
+    uncompressed: bool,
+
     /// Write the input vector, all intermediate vectors, and the final result to the provided file
     /// in `safetensors` format. If the file already exists it will be overwritten. Otherwise, a new
     /// file will be created.
@@ -113,8 +117,12 @@ fn main() -> Result<()> {
             rng_seeder.rng(("matrix", k)),
         )?;
 
-        let compressed = CompressedMatrix::from_read(&mut reader, cli.dim)?;
-        let uncompressed = compressed.to_uncompressed(cli.dim);
+        let uncompressed = if cli.uncompressed {
+            UncompressedMatrix::from_read(&mut reader, cli.dim, cli.dim)?
+        } else {
+            let compressed = CompressedMatrix::from_read(&mut reader, cli.dim)?;
+            compressed.to_uncompressed(cli.dim)
+        };
 
         assert!(uncompressed == uncompressed_ground_truth); // Don't use `assert_eq!` because matrices are too big to print.
 

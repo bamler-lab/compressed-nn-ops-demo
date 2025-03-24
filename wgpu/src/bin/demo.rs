@@ -19,6 +19,10 @@ struct Cli {
     #[arg(long)]
     debug: Option<PathBuf>,
 
+    /// Matrices are stored in uncompressed form. This is meant for baseline performance testing.
+    #[arg(long)]
+    uncompressed: bool,
+
     #[command(flatten)]
     verbose: clap_verbosity_flag::Verbosity,
 }
@@ -92,7 +96,12 @@ fn main() -> Result<()> {
     dbg!(&device);
 
     // TODO: try `create_shader_module_trusted` and turn off unnecessary runtime checks.
-    let mut shader_file = std::fs::File::open("src/shader.wgsl")?;
+    let shader_path = if cli.uncompressed {
+        "src/shader_uncompressed.wgsl"
+    } else {
+        "src/shader.wgsl"
+    };
+    let mut shader_file = std::fs::File::open(shader_path)?;
     let mut shader_code = String::new();
     shader_file.read_to_string(&mut shader_code)?;
     // let module = device.create_shader_module(wgpu::include_wgsl!("../shader.wgsl"));

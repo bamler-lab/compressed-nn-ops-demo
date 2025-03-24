@@ -242,6 +242,36 @@ impl UncompressedMatrix {
     pub fn grid_spacing(&self) -> SimpleF16 {
         self.grid_spacing
     }
+
+    pub fn to_write(&self, writer: &mut std::io::BufWriter<std::fs::File>) -> Result<u32> {
+        writer.write_u16::<LittleEndian>(self.grid_spacing.to_bits())?;
+        writer.write_u16::<LittleEndian>(0)?; // padding
+
+        writer.write_all(bytemuck::cast_slice(&self.data))?;
+        // Pad to a multiple of 4 bytes.
+        let num_padding = 3 - (self.data.len() + 3) % 4;
+        writer.write_all(&[0u8; 3][0..num_padding])?;
+
+        Ok((4 + self.data.len() + num_padding) as u32)
+    }
+
+    pub fn from_read(mut reader: impl Read, rows: u32, cols: u32) -> Result<Self> {
+        let grid_spacing = SimpleF16::from_bits(reader.read_u16::<LittleEndian>()?);
+        reader.read_u16::<LittleEndian>()?; // Ignore the padding.
+
+        let mut data = vec![0i8; (rows * cols) as usize];
+        reader.read_exact(bytemuck::cast_slice_mut(&mut data))?;
+
+        let num_padding = 3 - (data.len() + 3) % 4;
+        reader.read_exact(&mut [0u8; 3][0..num_padding])?; // Ignore the padding.
+
+        Ok(Self {
+            rows,
+            cols,
+            grid_spacing,
+            data: data.into_boxed_slice(),
+        })
+    }
 }
 
 impl CompressedMatrix {
