@@ -150,50 +150,52 @@ fn mat_vec_mul(
     var accumulator = 0i;
 
     for (var col = 0u; col != globals.output_dim / 4; col += 1u) {
-        let lower_state = u32(state);
-        state >>= 32;
+        var quantile = u32(state & 0xFF);
+        var ppf_entry = unpack4xU8(ppf[quantile]);
+        let matrix_entry0 = i32(ppf_entry[2]) + grid_start;
+        state = (state >> 8) * u64(ppf_entry[1]) + u64(quantile - ppf_entry[0]);
+        var needs_refill = state >> 32 == 0;
+        if (needs_refill) {
+            state = (state << 32) | u64(compressed_data[cursor + subgroupExclusiveAdd(u32(needs_refill))]);
+        }
+        cursor += subgroupAdd(u32(needs_refill));
 
-        let quantiles = unpack4xU8(lower_state);
+        quantile = u32(state & 0xFF);
+        ppf_entry = unpack4xU8(ppf[quantile]);
+        let matrix_entry1 = i32(ppf_entry[2]) + grid_start;
+        state = (state >> 8) * u64(ppf_entry[1]) + u64(quantile - ppf_entry[0]);
+        needs_refill = state >> 32 == 0;
+        if (needs_refill) {
+            state = (state << 32) | u64(compressed_data[cursor + subgroupExclusiveAdd(u32(needs_refill))]);
+        }
+        cursor += subgroupAdd(u32(needs_refill));
 
-        let ppf_entry0 = unpack4xU8(ppf[quantiles[0]]);
-        let ppf_entry1 = unpack4xU8(ppf[quantiles[1]]);
-        let ppf_entry2 = unpack4xU8(ppf[quantiles[2]]);
-        let ppf_entry3 = unpack4xU8(ppf[quantiles[3]]);
+        quantile = u32(state & 0xFF);
+        ppf_entry = unpack4xU8(ppf[quantile]);
+        let matrix_entry2 = i32(ppf_entry[2]) + grid_start;
+        state = (state >> 8) * u64(ppf_entry[1]) + u64(quantile - ppf_entry[0]);
+        needs_refill = state >> 32 == 0;
+        if (needs_refill) {
+            state = (state << 32) | u64(compressed_data[cursor + subgroupExclusiveAdd(u32(needs_refill))]);
+        }
+        cursor += subgroupAdd(u32(needs_refill));
 
-        let matrix_entries = vec4(
-            i32(ppf_entry0[2]) + grid_start,
-            i32(ppf_entry1[2]) + grid_start,
-            i32(ppf_entry2[2]) + grid_start,
-            i32(ppf_entry3[2]) + grid_start,
-        );
+        quantile = u32(state & 0xFF);
+        ppf_entry = unpack4xU8(ppf[quantile]);
+        let matrix_entry3 = i32(ppf_entry[2]) + grid_start;
+        state = (state >> 8) * u64(ppf_entry[1]) + u64(quantile - ppf_entry[0]);
+        needs_refill = state >> 32 == 0;
+        if (needs_refill) {
+            state = (state << 32) | u64(compressed_data[cursor + subgroupExclusiveAdd(u32(needs_refill))]);
+        }
+        cursor += subgroupAdd(u32(needs_refill));
+
+        let matrix_entries = vec4(matrix_entry0, matrix_entry1, matrix_entry2, matrix_entry3);
 
         // TODO: This emulates `dot4I8Packed`, which doesn't seem to be available.
         // Do we need to request some feature to use it?
         let input_vector_entries = unpack4xI8(input_vector_workgroup[col]);
         accumulator += dot(matrix_entries, input_vector_entries);
-
-        // TODO: maybe do this as a single 32-bit subtraction.
-        let remainder0 = quantiles[0] - ppf_entry0[0];
-        let remainder1 = quantiles[1] - ppf_entry1[0];
-        let remainder2 = quantiles[2] - ppf_entry2[0];
-        let remainder3 = quantiles[3] - ppf_entry3[0];
-
-        var full_remainder = remainder0 * ppf_entry1[1];
-        full_remainder += remainder1;
-        full_remainder *= ppf_entry2[1];
-        full_remainder += remainder2;
-        full_remainder *= ppf_entry3[1];
-        full_remainder += remainder3;
-
-        let full_probability = ppf_entry0[1] * ppf_entry1[1] * ppf_entry2[1] * ppf_entry3[1];
-
-        state = u64(full_probability) * state + u64(full_remainder);
-
-        let needs_refill = state >> 32 == 0;
-        if (needs_refill) {
-            state = (state << 32) | u64(compressed_data[cursor + subgroupExclusiveAdd(u32(needs_refill))]);
-        }
-        cursor += subgroupAdd(u32(needs_refill));
     }
 
     let result = u32(i32(round(f32(accumulator) * grid_spacing))) & 0xff;
