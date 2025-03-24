@@ -144,6 +144,16 @@ fn mat_vec_mul(
     state |= u64(compressed_data[cursor]);
     cursor += 1;
 
+    var buf = array<u32, 4>(
+        compressed_data[cursor],
+        compressed_data[cursor + 1],
+        compressed_data[cursor + 2],
+        compressed_data[cursor + 3],
+    );
+    var buf_next = 0u;
+    var buf_len = 4u;
+    cursor += 4;
+
     var accumulator = 0i;
 
     for (var col = 0u; col != globals.output_dim / 4; col += 1u) {
@@ -187,9 +197,18 @@ fn mat_vec_mul(
         state = u64(full_probability) * state + u64(full_remainder);
 
         if (state >> 32 == 0) {
-            // Refill the state as soon as we can.
-            state = (state << 32) | u64(compressed_data[cursor]);
-            cursor += 1;
+            state = (state << 32) | u64(buf[buf_next]);
+            buf_next = (buf_next + 1u) & 0x03;
+            buf_len -= 1u;
+        }
+
+        if (subgroupAny(buf_len == 0u)) {
+            // If any lane needs a refill, refill all lanes.
+            while (buf_len != 4) {
+                buf[(buf_next + buf_len) & 0x03] = compressed_data[cursor];
+                cursor += 1;
+                buf_len += 1;
+            }
         }
     }
 

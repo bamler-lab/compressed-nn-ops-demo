@@ -69,8 +69,8 @@ fn main() -> Result<()> {
         - file_header.offsets_and_file_size[0];
 
     let mut required_limits = wgpu::Limits::downlevel_defaults();
-    required_limits.max_storage_buffer_binding_size = compressed_len;
-    required_limits.max_buffer_size = compressed_len as u64;
+    required_limits.max_storage_buffer_binding_size = compressed_len + 16; // `+ 16` for buffering.
+    required_limits.max_buffer_size = compressed_len as u64 + 16; // `+ 16` for buffering.
     required_limits.min_uniform_buffer_offset_alignment =
         adapter.limits().min_uniform_buffer_offset_alignment;
 
@@ -147,8 +147,8 @@ fn main() -> Result<()> {
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, // TODO: is COPY_DST necessary?
     });
 
-    let mut compressed_data = vec![0; compressed_len as usize];
-    reader.read_exact(&mut compressed_data[..])?;
+    let mut compressed_data = vec![0; compressed_len as usize + 16]; // `+ 16` for buffering.
+    reader.read_exact(&mut compressed_data[0..compressed_len as usize])?;
     let compressed_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("compressed_data_buffer"),
         contents: &compressed_data,
