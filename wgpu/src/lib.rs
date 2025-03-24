@@ -245,107 +245,93 @@ impl UncompressedMatrix {
 }
 
 impl CompressedMatrix {
-    pub fn from_uncompressed(uncompressed: &UncompressedMatrix) -> Self {
+    pub fn from_uncompressed(uncompressed: &UncompressedMatrix, subgroup_size: u32) -> Self {
         assert_eq!(uncompressed.cols % 4, 0);
+        assert_eq!(uncompressed.rows % subgroup_size, 0);
 
-        let mut counts = [0u32; 256];
-        for &x in &uncompressed.data {
-            counts[(x as i32 + 128) as usize] += 1;
-        }
-        let grid_start_index = counts
-            .iter()
-            .position(|&x| x > 0)
-            .expect("non-empty matrix");
-        let grid_start = (grid_start_index as i32 - 128) as i8;
-        let grid_end_index = counts
-            .iter()
-            .rposition(|&x| x > 0)
-            .expect("non-empty matrix")
-            + 1;
-
-        let unnormalized_probabilities = counts[grid_start_index..grid_end_index]
-            .iter()
-            .map(|&x| x as f32)
-            .collect::<Vec<_>>();
-
-        let entropy_model =
-            ContiguousCategoricalEntropyModel::<u8, Vec<u8>,8>::from_floating_point_probabilities_perfect(
-                &unnormalized_probabilities,
-            )
-            .expect("must be normalizable");
-        let cdf = entropy_model
-            .symbol_table()
-            .map(|(_symbol, left_cdf, _probability)| left_cdf)
-            .chain(std::iter::once(0))
-            .collect::<Box<[u8]>>();
+        let (cdf, grid_start) = create_cdf(&uncompressed.data);
 
         let mut compressed_data = Vec::new();
-        let mut offsets = Vec::with_capacity(uncompressed.rows as usize + 1);
+        let mut offsets = Vec::with_capacity((uncompressed.rows / subgroup_size) as usize + 1);
 
-        for row in (0..uncompressed.rows).rev() {
+        let mut state = vec![0u64; subgroup_size as usize];
+
+        for subgroup in (0..uncompressed.rows / subgroup_size).rev() {
             offsets.push(compressed_data.len() as u32);
 
+            let first_row = subgroup * subgroup_size;
+
             // TODO: is this reset really necessary after each row?
-            let mut state = 1u64 << 32;
+            state.fill(1u64 << 32);
 
-            let start = (row * uncompressed.cols) as usize;
-            let end = start + uncompressed.cols as usize;
-            let chunks: &[[i8; 4]] = bytemuck::cast_slice(&uncompressed.data[start..end]);
-            for chunk in chunks.iter().rev() {
-                let index0 = (chunk[0] as i32 - grid_start as i32) as usize;
-                let left_cdf0 = cdf[index0];
-                let right_cdf0 = cdf[index0 + 1];
-                let probability0 = right_cdf0.wrapping_sub(left_cdf0) as u32;
+            for col_group in (0..uncompressed.cols / 4).rev() {
+                let first_col = col_group * 4;
 
-                let index1 = (chunk[1] as i32 - grid_start as i32) as usize;
-                let left_cdf1 = cdf[index1];
-                let right_cdf1 = cdf[index1 + 1];
-                let probability1 = right_cdf1.wrapping_sub(left_cdf1) as u32;
+                for i in (0..subgroup_size).rev() {
+                    let chunk_start = (first_row + i) * uncompressed.cols + first_col;
+                    let chunk =
+                        &uncompressed.data[chunk_start as usize..(chunk_start + 4) as usize];
 
-                let index2 = (chunk[2] as i32 - grid_start as i32) as usize;
-                let left_cdf2 = cdf[index2];
-                let right_cdf2 = cdf[index2 + 1];
-                let probability2 = right_cdf2.wrapping_sub(left_cdf2) as u32;
+                    let index0 = (chunk[0] as i32 - grid_start as i32) as usize;
+                    let left_cdf0 = cdf[index0];
+                    let right_cdf0 = cdf[index0 + 1];
+                    let probability0 = right_cdf0.wrapping_sub(left_cdf0) as u32;
 
-                let index3 = (chunk[3] as i32 - grid_start as i32) as usize;
-                let left_cdf3 = cdf[index3];
-                let right_cdf3 = cdf[index3 + 1];
-                let probability3 = right_cdf3.wrapping_sub(left_cdf3) as u32;
+                    let index1 = (chunk[1] as i32 - grid_start as i32) as usize;
+                    let left_cdf1 = cdf[index1];
+                    let right_cdf1 = cdf[index1 + 1];
+                    let probability1 = right_cdf1.wrapping_sub(left_cdf1) as u32;
 
-                if (state >> 32) as u32 >= probability0 * probability1 * probability2 * probability3
-                {
-                    // The planned updates would overflow the state, so we need to flush a part of it.
-                    compressed_data.push((state & ((1u64 << 32) - 1)) as u32);
-                    state >>= 32;
-                    // At this point, `state >> 32 == 0`.
-                } // If the branch was not taken, then `state >> 32 != 0` at this point.
+                    let index2 = (chunk[2] as i32 - grid_start as i32) as usize;
+                    let left_cdf2 = cdf[index2];
+                    let right_cdf2 = cdf[index2 + 1];
+                    let probability2 = right_cdf2.wrapping_sub(left_cdf2) as u32;
 
-                let remainder3 = (state % probability3 as u64) as u32;
-                state /= probability3 as u64;
-                let mut lower_state = left_cdf3 as u32 + remainder3;
+                    let index3 = (chunk[3] as i32 - grid_start as i32) as usize;
+                    let left_cdf3 = cdf[index3];
+                    let right_cdf3 = cdf[index3 + 1];
+                    let probability3 = right_cdf3.wrapping_sub(left_cdf3) as u32;
 
-                let remainder2 = (state % probability2 as u64) as u32;
-                state /= probability2 as u64;
-                lower_state <<= 8;
-                lower_state |= left_cdf2 as u32 + remainder2;
+                    let state = &mut state[i as usize];
+                    if (*state >> 32) as u32
+                        >= probability0 * probability1 * probability2 * probability3
+                    {
+                        // The planned updates would overflow the state, so we need to flush a part of it.
+                        compressed_data.push((*state & ((1u64 << 32) - 1)) as u32);
+                        *state >>= 32;
+                        // At this point, `state >> 32 == 0`.
+                    } // If the branch was not taken, then `state >> 32 != 0` at this point.
 
-                let remainder1 = (state % probability1 as u64) as u32;
-                state /= probability1 as u64;
-                lower_state <<= 8;
-                lower_state |= left_cdf1 as u32 + remainder1;
+                    let remainder3 = (*state % probability3 as u64) as u32;
+                    *state /= probability3 as u64;
+                    let mut lower_state = left_cdf3 as u32 + remainder3;
 
-                let remainder0 = (state % probability0 as u64) as u32;
-                state /= probability0 as u64;
-                lower_state <<= 8;
-                lower_state |= left_cdf0 as u32 + remainder0;
+                    let remainder2 = (*state % probability2 as u64) as u32;
+                    *state /= probability2 as u64;
+                    lower_state <<= 8;
+                    lower_state |= left_cdf2 as u32 + remainder2;
 
-                assert_eq!(state >> 32, 0);
+                    let remainder1 = (*state % probability1 as u64) as u32;
+                    *state /= probability1 as u64;
+                    lower_state <<= 8;
+                    lower_state |= left_cdf1 as u32 + remainder1;
 
-                state = (state << 32) | lower_state as u64;
+                    let remainder0 = (*state % probability0 as u64) as u32;
+                    *state /= probability0 as u64;
+                    lower_state <<= 8;
+                    lower_state |= left_cdf0 as u32 + remainder0;
+
+                    assert_eq!(*state >> 32, 0);
+
+                    *state = (*state << 32) | lower_state as u64;
+                }
             }
 
-            compressed_data.push((state & ((1u64 << 32) - 1)) as u32);
-            compressed_data.push((state >> 32) as u32);
+            for i in (0..subgroup_size).rev() {
+                let state = &mut state[i as usize];
+                compressed_data.push((*state & ((1u64 << 32) - 1)) as u32);
+                compressed_data.push((*state >> 32) as u32);
+            }
         }
 
         offsets.push(compressed_data.len() as u32);
@@ -365,10 +351,10 @@ impl CompressedMatrix {
         }
     }
 
-    pub fn to_uncompressed(&self, cols: u32) -> UncompressedMatrix {
+    pub fn to_uncompressed(&self, cols: u32, subgroup_size: u32) -> UncompressedMatrix {
         assert_eq!(cols % 4, 0);
 
-        let rows = self.offsets.len() as u32 - 1;
+        let rows = subgroup_size * (self.offsets.len() as u32 - 1);
 
         #[derive(Debug, Clone, Copy)]
         struct PpfEntry {
@@ -396,64 +382,83 @@ impl CompressedMatrix {
 
         assert_eq!(ppf.len(), 256);
 
-        let mut uncompressed_data = Vec::with_capacity((rows * cols) as usize);
+        let mut uncompressed_data = vec![0; (rows * cols) as usize];
 
-        for row in 0..rows {
-            let mut cursor = self.offsets[row as usize];
+        let mut state = vec![0u64; subgroup_size as usize];
 
-            let mut state = self.compressed_data[cursor as usize] as u64;
-            state <<= 32;
-            cursor += 1;
-            state |= self.compressed_data[cursor as usize] as u64;
-            cursor += 1;
+        for subgroup in 0..rows / subgroup_size {
+            let mut cursor = self.offsets[subgroup as usize];
 
-            for _ in 0..cols / 4 {
-                let lower_state = (state & ((1u64 << 32) - 1)) as u32;
-                state >>= 32;
+            let first_row = subgroup * subgroup_size;
 
-                let quantile0 = (lower_state & 0xff) as u8;
-                let quantile1 = ((lower_state >> 8) & 0xff) as u8;
-                let quantile2 = ((lower_state >> 16) & 0xff) as u8;
-                let quantile3 = ((lower_state >> 24) & 0xff) as u8;
+            for i in 0..subgroup_size {
+                let state = &mut state[i as usize];
+                *state = self.compressed_data[cursor as usize] as u64;
+                *state <<= 32;
+                cursor += 1;
+                *state |= self.compressed_data[cursor as usize] as u64;
+                cursor += 1;
+            }
 
-                let ppf_entry0 = ppf[quantile0 as usize];
-                let ppf_entry1 = ppf[quantile1 as usize];
-                let ppf_entry2 = ppf[quantile2 as usize];
-                let ppf_entry3 = ppf[quantile3 as usize];
+            for col_group in 0..cols / 4 {
+                let first_col = col_group * 4;
 
-                uncompressed_data.push(ppf_entry0.symbol);
-                uncompressed_data.push(ppf_entry1.symbol);
-                uncompressed_data.push(ppf_entry2.symbol);
-                uncompressed_data.push(ppf_entry3.symbol);
+                for i in 0..subgroup_size {
+                    let state = &mut state[i as usize];
+                    let chunk_start = (first_row + i) * cols + first_col;
+                    let chunk =
+                        &mut uncompressed_data[chunk_start as usize..(chunk_start + 4) as usize];
 
-                let remainder0 = quantile0 - ppf_entry0.left_cdf;
-                let remainder1 = quantile1 - ppf_entry1.left_cdf;
-                let remainder2 = quantile2 - ppf_entry2.left_cdf;
-                let remainder3 = quantile3 - ppf_entry3.left_cdf;
+                    let lower_state = (*state & ((1u64 << 32) - 1)) as u32;
+                    *state >>= 32;
 
-                let mut full_remainder = remainder0 as u32 * ppf_entry1.probability.get() as u32;
-                full_remainder += remainder1 as u32;
-                full_remainder *= ppf_entry2.probability.get() as u32;
-                full_remainder += remainder2 as u32;
-                full_remainder *= ppf_entry3.probability.get() as u32;
-                full_remainder += remainder3 as u32;
+                    let quantile0 = (lower_state & 0xff) as u8;
+                    let quantile1 = ((lower_state >> 8) & 0xff) as u8;
+                    let quantile2 = ((lower_state >> 16) & 0xff) as u8;
+                    let quantile3 = ((lower_state >> 24) & 0xff) as u8;
 
-                let full_probability = ppf_entry0.probability.get() as u32
-                    * ppf_entry1.probability.get() as u32
-                    * ppf_entry2.probability.get() as u32
-                    * ppf_entry3.probability.get() as u32;
+                    let ppf_entry0 = ppf[quantile0 as usize];
+                    let ppf_entry1 = ppf[quantile1 as usize];
+                    let ppf_entry2 = ppf[quantile2 as usize];
+                    let ppf_entry3 = ppf[quantile3 as usize];
 
-                state = full_probability as u64 * state + full_remainder as u64;
+                    chunk[0] = ppf_entry0.symbol;
+                    chunk[1] = ppf_entry1.symbol;
+                    chunk[2] = ppf_entry2.symbol;
+                    chunk[3] = ppf_entry3.symbol;
 
-                if state >> 32 == 0 {
-                    // Refill the state as soon as we can.
-                    state = (state << 32) | self.compressed_data[cursor as usize] as u64;
-                    cursor += 1;
+                    let remainder0 = quantile0 - ppf_entry0.left_cdf;
+                    let remainder1 = quantile1 - ppf_entry1.left_cdf;
+                    let remainder2 = quantile2 - ppf_entry2.left_cdf;
+                    let remainder3 = quantile3 - ppf_entry3.left_cdf;
+
+                    let mut full_remainder =
+                        remainder0 as u32 * ppf_entry1.probability.get() as u32;
+                    full_remainder += remainder1 as u32;
+                    full_remainder *= ppf_entry2.probability.get() as u32;
+                    full_remainder += remainder2 as u32;
+                    full_remainder *= ppf_entry3.probability.get() as u32;
+                    full_remainder += remainder3 as u32;
+
+                    let full_probability = ppf_entry0.probability.get() as u32
+                        * ppf_entry1.probability.get() as u32
+                        * ppf_entry2.probability.get() as u32
+                        * ppf_entry3.probability.get() as u32;
+
+                    *state = full_probability as u64 * *state + full_remainder as u64;
+
+                    if *state >> 32 == 0 {
+                        // Refill the state as soon as we can.
+                        *state = (*state << 32) | self.compressed_data[cursor as usize] as u64;
+                        cursor += 1;
+                    }
                 }
             }
 
-            assert_eq!(state, 1u64 << 32);
-            assert_eq!(cursor, self.offsets[(row + 1) as usize]);
+            for i in 0..subgroup_size {
+                assert_eq!(state[i as usize], 1u64 << 32);
+            }
+            assert_eq!(cursor, self.offsets[(subgroup + 1) as usize]);
         }
 
         UncompressedMatrix {
@@ -489,7 +494,9 @@ impl CompressedMatrix {
             + 4 * (self.offsets.len() + self.compressed_data.len())) as u32)
     }
 
-    pub fn from_read(mut reader: impl Read, rows: u32) -> Result<Self> {
+    pub fn from_read(mut reader: impl Read, rows: u32, subgroup_size: u32) -> Result<Self> {
+        assert_eq!(rows % subgroup_size, 0);
+
         let grid_spacing = SimpleF16::from_bits(reader.read_u16::<LittleEndian>()?);
         let grid_start = reader.read_i8()?;
         let grid_size = reader.read_u8()?;
@@ -500,10 +507,10 @@ impl CompressedMatrix {
         let num_padding = 3 - (cdf.len() + 3) % 4;
         reader.read_exact(&mut [0u8; 3][0..num_padding])?;
 
-        let offsets = (0..rows + 1)
+        let offsets = (0..rows / subgroup_size + 1)
             .map(|_| reader.read_u32::<LittleEndian>())
             .collect::<Result<Box<[_]>, _>>()?;
-        let compressed_data = (0..offsets[rows as usize])
+        let compressed_data = (0..offsets[(rows / subgroup_size) as usize])
             .map(|_| reader.read_u32::<LittleEndian>())
             .collect::<Result<Box<[_]>, _>>()?;
 
@@ -515,6 +522,42 @@ impl CompressedMatrix {
             compressed_data,
         })
     }
+}
+
+fn create_cdf(data: &[i8]) -> (Box<[u8]>, i8) {
+    let mut counts = [0u32; 256];
+    for &x in data {
+        counts[(x as i32 + 128) as usize] += 1;
+    }
+    let grid_start_index = counts
+        .iter()
+        .position(|&x| x > 0)
+        .expect("non-empty matrix");
+    let grid_start = (grid_start_index as i32 - 128) as i8;
+    let grid_end_index = counts
+        .iter()
+        .rposition(|&x| x > 0)
+        .expect("non-empty matrix")
+        + 1;
+
+    let unnormalized_probabilities = counts[grid_start_index..grid_end_index]
+        .iter()
+        .map(|&x| x as f32)
+        .collect::<Vec<_>>();
+
+    let entropy_model =
+        ContiguousCategoricalEntropyModel::<u8, Vec<u8>,8>::from_floating_point_probabilities_perfect(
+            &unnormalized_probabilities,
+        )
+        .expect("must be normalizable");
+
+    let cdf = entropy_model
+        .symbol_table()
+        .map(|(_symbol, left_cdf, _probability)| left_cdf)
+        .chain(std::iter::once(0))
+        .collect::<Box<[u8]>>();
+
+    (cdf, grid_start)
 }
 
 #[derive(Clone, Debug)]

@@ -24,6 +24,9 @@ struct Cli {
     #[arg(short, long, default_value = "4096")]
     dim: u32,
 
+    #[arg(long)]
+    subgroup_size: u32,
+
     /// Standard deviation of the Gaussian distribution used to generate the random values for both
     /// the input vector and the matrices.
     #[arg(short, long, default_value = "4.0")]
@@ -90,7 +93,7 @@ fn main() -> Result<()> {
             rng_seeder.rng(("matrix", k)),
         )?;
 
-        let compressed = CompressedMatrix::from_uncompressed(&uncompressed);
+        let compressed = CompressedMatrix::from_uncompressed(&uncompressed, cli.subgroup_size);
 
         let bytes_written = compressed.to_write(&mut writer)?;
         cursor += bytes_written;

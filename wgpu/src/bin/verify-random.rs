@@ -23,6 +23,9 @@ struct Cli {
     #[arg(short, long, default_value = "4096")]
     dim: u32,
 
+    #[arg(long)]
+    subgroup_size: u32,
+
     /// Standard deviation of the Gaussian distribution used to generate the random values for both
     /// the input vector and the matrices.
     #[arg(short, long, default_value = "4.0")]
@@ -113,8 +116,8 @@ fn main() -> Result<()> {
             rng_seeder.rng(("matrix", k)),
         )?;
 
-        let compressed = CompressedMatrix::from_read(&mut reader, cli.dim)?;
-        let uncompressed = compressed.to_uncompressed(cli.dim);
+        let compressed = CompressedMatrix::from_read(&mut reader, cli.dim, cli.subgroup_size)?;
+        let uncompressed = compressed.to_uncompressed(cli.dim, cli.subgroup_size);
 
         assert!(uncompressed == uncompressed_ground_truth); // Don't use `assert_eq!` because matrices are too big to print.
 

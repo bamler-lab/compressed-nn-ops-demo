@@ -38,8 +38,8 @@ fn mat_vec_mul(
     @builtin(global_invocation_id) global_id: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
     // @builtin(subgroup_id) subgroup_id: u32,
-    // @builtin(subgroup_invocation_id) subgroup_invocation_id: u32,
-    // @builtin(subgroup_size) subgroup_size: u32,
+    @builtin(subgroup_invocation_id) subgroup_invocation_id: u32,
+    @builtin(subgroup_size) subgroup_size: u32,
 ) {
     // `global_invocation_id.x` ranges from 0 to 4095
     // `subgroup_id` is [16 times 0, 16 times 1, 16 times 2, 16times 3, then repeats: 16 times 0 ...]
@@ -136,13 +136,16 @@ fn mat_vec_mul(
     // Initialize decoder state.
 
     let offsets_start = globals.cursor + 1 + (grid_size + 4) / 4;
-    let offset = compressed_data[offsets_start + global_id.x];
-    cursor = offsets_start + globals.output_dim + 1 + offset;
+    let offset = compressed_data[offsets_start + global_id.x / subgroup_size];
+    let subgroup_start = offsets_start + globals.output_dim / subgroup_size + 1 + offset;
+    cursor = subgroup_start + 2 * subgroup_invocation_id;
 
     var state = u64(compressed_data[cursor]) << 32;
     cursor += 1;
     state |= u64(compressed_data[cursor]);
-    cursor += 1;
+    let debug_initial_state = state;
+
+    cursor = subgroup_start + 2 * subgroup_size; // Skip all initial states of the subgroup.
 
     var accumulator = 0i;
 
@@ -186,14 +189,15 @@ fn mat_vec_mul(
 
         state = u64(full_probability) * state + u64(full_remainder);
 
-        if (state >> 32 == 0) {
-            // Refill the state as soon as we can.
-            state = (state << 32) | u64(compressed_data[cursor]);
-            cursor += 1;
+        let needs_refill = state >> 32 == 0;
+        if (needs_refill) {
+            state = (state << 32) | u64(compressed_data[cursor + subgroupExclusiveAdd(u32(needs_refill))]);
         }
+        cursor += subgroupAdd(u32(needs_refill));
     }
 
     let result = u32(i32(round(f32(accumulator) * grid_spacing))) & 0xff;
+
     let next_result = subgroupShuffleDown(result, 1u);
     let pair = (next_result << 8) | result;
     let next_pair = subgroupShuffleDown(pair, 2u);
