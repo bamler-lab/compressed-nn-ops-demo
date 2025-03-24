@@ -145,7 +145,20 @@ fn mat_vec_mul(
     state |= u64(compressed_data[cursor]);
     let debug_initial_state = state;
 
-    cursor = subgroup_start + 2 * subgroup_size; // Skip all initial states of the subgroup.
+    // Skip all initial states of the subgroup and jump to initial buf.
+    cursor = subgroup_start + 2 * subgroup_size + 4 * subgroup_invocation_id;
+
+    var buf = array<u32, 4>(
+        compressed_data[cursor],
+        compressed_data[cursor + 1],
+        compressed_data[cursor + 2],
+        compressed_data[cursor + 3],
+    );
+    var buf_next = 0u;
+    var buf_len = 4u;
+
+    // Skip all initial states and initial bufs of the subgroup.
+    cursor = subgroup_start + 6 * subgroup_size;
 
     var accumulator = 0i;
 
@@ -189,11 +202,25 @@ fn mat_vec_mul(
 
         state = u64(full_probability) * state + u64(full_remainder);
 
-        let needs_refill = state >> 32 == 0;
-        if (needs_refill) {
-            state = (state << 32) | u64(compressed_data[cursor + subgroupExclusiveAdd(u32(needs_refill))]);
+        if (subgroupAny((state >> 32 == 0) && (buf_len == 0u))) {
+            // If any lane needs a refill, refill all lanes.
+            let num_refill = 4u - buf_len;
+            let prefix = subgroupExclusiveAdd(num_refill);
+            let inc = subgroupAdd(num_refill);
+            var cur_cursor = cursor + prefix;
+            cursor += inc;
+            while (buf_len != 4) {
+                buf[(buf_next + buf_len) & 0x03] = compressed_data[cur_cursor];
+                cur_cursor += 1;
+                buf_len += 1;
+            }
         }
-        cursor += subgroupAdd(u32(needs_refill));
+
+        if (state >> 32 == 0) {
+            state = (state << 32) | u64(buf[buf_next]);
+            buf_next = (buf_next + 1u) & 0x03;
+            buf_len -= 1u;
+        }
     }
 
     let result = u32(i32(round(f32(accumulator) * grid_spacing))) & 0xff;

@@ -1,7 +1,7 @@
 use std::{
     hash::{Hash, Hasher},
     io::{Read, Write},
-    num::NonZeroU8,
+    num::{NonZeroU8, NonZeroU32},
 };
 
 use anyhow::{Context, Result};
@@ -246,6 +246,14 @@ impl UncompressedMatrix {
 
 impl CompressedMatrix {
     pub fn from_uncompressed(uncompressed: &UncompressedMatrix, subgroup_size: u32) -> Self {
+        #[derive(Debug, Copy, Clone)]
+        struct Ringbuf {
+            buf: [u32; 4],
+            next: u32,
+            len: u32,
+            word_cursor: u32,
+        }
+
         assert_eq!(uncompressed.cols % 4, 0);
         assert_eq!(uncompressed.rows % subgroup_size, 0);
 
@@ -254,20 +262,29 @@ impl CompressedMatrix {
         let mut compressed_data = Vec::new();
         let mut offsets = Vec::with_capacity((uncompressed.rows / subgroup_size) as usize + 1);
 
-        let mut state = vec![0u64; subgroup_size as usize];
+        let mut bufs = vec![
+            Ringbuf {
+                buf: [0u32; 4],
+                next: 0,
+                len: 0,
+                word_cursor: 0
+            };
+            subgroup_size as usize
+        ];
 
-        for subgroup in (0..uncompressed.rows / subgroup_size).rev() {
+        let mut emitted_words = vec![None; (subgroup_size * uncompressed.cols / 4) as usize];
+
+        for subgroup in 0..uncompressed.rows / subgroup_size {
             offsets.push(compressed_data.len() as u32);
 
             let first_row = subgroup * subgroup_size;
 
-            // TODO: is this reset really necessary after each row?
-            state.fill(1u64 << 32);
+            for i in 0..subgroup_size {
+                // TODO: is this reset really necessary after each row?
+                let mut state = 1u64 << 32;
+                for col_group in (0..uncompressed.cols / 4).rev() {
+                    let first_col = col_group * 4;
 
-            for col_group in (0..uncompressed.cols / 4).rev() {
-                let first_col = col_group * 4;
-
-                for i in (0..subgroup_size).rev() {
                     let chunk_start = (first_row + i) * uncompressed.cols + first_col;
                     let chunk =
                         &uncompressed.data[chunk_start as usize..(chunk_start + 4) as usize];
@@ -292,55 +309,109 @@ impl CompressedMatrix {
                     let right_cdf3 = cdf[index3 + 1];
                     let probability3 = right_cdf3.wrapping_sub(left_cdf3) as u32;
 
-                    let state = &mut state[i as usize];
-                    if (*state >> 32) as u32
+                    let word = if (state >> 32) as u32
                         >= probability0 * probability1 * probability2 * probability3
                     {
                         // The planned updates would overflow the state, so we need to flush a part of it.
-                        compressed_data.push((*state & ((1u64 << 32) - 1)) as u32);
-                        *state >>= 32;
+                        let word = (state & ((1u64 << 32) - 1)) as u32;
+                        state >>= 32;
+                        Some(
+                            NonZeroU32::new(word)
+                                .expect("non-zero by if-condition since probability > 0"),
+                        )
                         // At this point, `state >> 32 == 0`.
-                    } // If the branch was not taken, then `state >> 32 != 0` at this point.
+                    } else {
+                        // If the branch was not taken, then `state >> 32 != 0` at this point.
+                        None
+                    };
+                    emitted_words[(col_group * subgroup_size + i) as usize] = word;
 
-                    let remainder3 = (*state % probability3 as u64) as u32;
-                    *state /= probability3 as u64;
+                    let remainder3 = (state % probability3 as u64) as u32;
+                    state /= probability3 as u64;
                     let mut lower_state = left_cdf3 as u32 + remainder3;
 
-                    let remainder2 = (*state % probability2 as u64) as u32;
-                    *state /= probability2 as u64;
+                    let remainder2 = (state % probability2 as u64) as u32;
+                    state /= probability2 as u64;
                     lower_state <<= 8;
                     lower_state |= left_cdf2 as u32 + remainder2;
 
-                    let remainder1 = (*state % probability1 as u64) as u32;
-                    *state /= probability1 as u64;
+                    let remainder1 = (state % probability1 as u64) as u32;
+                    state /= probability1 as u64;
                     lower_state <<= 8;
                     lower_state |= left_cdf1 as u32 + remainder1;
 
-                    let remainder0 = (*state % probability0 as u64) as u32;
-                    *state /= probability0 as u64;
+                    let remainder0 = (state % probability0 as u64) as u32;
+                    state /= probability0 as u64;
                     lower_state <<= 8;
                     lower_state |= left_cdf0 as u32 + remainder0;
 
-                    assert_eq!(*state >> 32, 0);
+                    assert_eq!(state >> 32, 0);
 
-                    *state = (*state << 32) | lower_state as u64;
+                    state = (state << 32) | lower_state as u64;
                 }
+
+                compressed_data.push((state >> 32) as u32);
+                compressed_data.push((state & ((1u64 << 32) - 1)) as u32);
             }
 
-            for i in (0..subgroup_size).rev() {
-                let state = &mut state[i as usize];
-                compressed_data.push((*state & ((1u64 << 32) - 1)) as u32);
-                compressed_data.push((*state >> 32) as u32);
+            for buf in &mut bufs {
+                buf.len = 0;
+                buf.word_cursor = 0;
+            }
+
+            let mut cursor = 0;
+            'coalesce_data: loop {
+                // Fill all buffers and write out data that decoder needs to do the same.
+                for (i, buf) in bufs.iter_mut().enumerate() {
+                    while buf.len != 4 && buf.word_cursor != uncompressed.cols / 4 {
+                        if let Some(word) =
+                            emitted_words[(buf.word_cursor * subgroup_size) as usize + i]
+                        {
+                            buf.buf[((buf.next + buf.len) & 0x03) as usize] = word.get();
+                            buf.len += 1;
+                            compressed_data.push(word.get());
+                        }
+                        buf.word_cursor += 1;
+                    }
+                    if buf.word_cursor == uncompressed.cols / 4 {
+                        // We've reached the end of the row. Fill `buf` with dummy values because
+                        // the decoder doesn't know yet that we're done.
+                        while buf.len != 4 {
+                            buf.buf[((buf.next + buf.len) & 0x03) as usize] = 0;
+                            buf.len += 1;
+                            compressed_data.push(0);
+                        }
+                    }
+                }
+
+                // Simulate reading from `bufs` until one of them underflows.
+                'simulate_read: loop {
+                    let col_offset = (cursor * subgroup_size) as usize;
+                    for (i, buf) in bufs.iter_mut().enumerate() {
+                        if emitted_words[col_offset + i].is_some() && buf.len == 0 {
+                            break 'simulate_read;
+                        }
+                    }
+
+                    for (i, buf) in bufs.iter_mut().enumerate() {
+                        if let Some(word) = emitted_words[col_offset + i] {
+                            // We know that `buf.len > 0` here.
+                            debug_assert_eq!(buf.buf[buf.next as usize], word.get());
+                            buf.next = (buf.next + 1) & 0x03;
+                            buf.len -= 1;
+                        }
+                    }
+
+                    cursor += 1;
+
+                    if cursor == uncompressed.cols / 4 {
+                        break 'coalesce_data;
+                    }
+                }
             }
         }
 
         offsets.push(compressed_data.len() as u32);
-        for offset in &mut offsets {
-            *offset = compressed_data.len() as u32 - *offset;
-        }
-
-        compressed_data.reverse();
-        offsets.reverse();
 
         Self {
             grid_spacing: uncompressed.grid_spacing,
@@ -352,6 +423,14 @@ impl CompressedMatrix {
     }
 
     pub fn to_uncompressed(&self, cols: u32, subgroup_size: u32) -> UncompressedMatrix {
+        #[derive(Debug, Copy, Clone)]
+        struct Ringbuf {
+            buf: [u32; 4],
+            next: u32,
+            len: u32,
+            state: u64,
+        }
+
         assert_eq!(cols % 4, 0);
 
         let rows = subgroup_size * (self.offsets.len() as u32 - 1);
@@ -384,28 +463,49 @@ impl CompressedMatrix {
 
         let mut uncompressed_data = vec![0; (rows * cols) as usize];
 
-        let mut state = vec![0u64; subgroup_size as usize];
+        let mut bufs = vec![
+            Ringbuf {
+                buf: [0u32; 4],
+                next: 0,
+                len: 0,
+                state: 0
+            };
+            subgroup_size as usize
+        ];
 
         for subgroup in 0..rows / subgroup_size {
             let mut cursor = self.offsets[subgroup as usize];
 
             let first_row = subgroup * subgroup_size;
 
-            for i in 0..subgroup_size {
-                let state = &mut state[i as usize];
-                *state = self.compressed_data[cursor as usize] as u64;
-                *state <<= 32;
+            for buf in &mut bufs {
+                buf.state = self.compressed_data[cursor as usize] as u64;
+                buf.state <<= 32;
                 cursor += 1;
-                *state |= self.compressed_data[cursor as usize] as u64;
+                buf.state |= self.compressed_data[cursor as usize] as u64;
                 cursor += 1;
+            }
+
+            for buf in &mut bufs {
+                buf.buf = [
+                    self.compressed_data[cursor as usize],
+                    self.compressed_data[cursor as usize + 1],
+                    self.compressed_data[cursor as usize + 2],
+                    self.compressed_data[cursor as usize + 3],
+                ];
+                buf.next = 0;
+                buf.len = 4;
+                cursor += 4;
             }
 
             for col_group in 0..cols / 4 {
                 let first_col = col_group * 4;
 
-                for i in 0..subgroup_size {
-                    let state = &mut state[i as usize];
-                    let chunk_start = (first_row + i) * cols + first_col;
+                let mut any_underflows = false;
+
+                for (i, buf) in bufs.iter_mut().enumerate() {
+                    let state = &mut buf.state;
+                    let chunk_start = (first_row + i as u32) * cols + first_col;
                     let chunk =
                         &mut uncompressed_data[chunk_start as usize..(chunk_start + 4) as usize];
 
@@ -447,18 +547,33 @@ impl CompressedMatrix {
 
                     *state = full_probability as u64 * *state + full_remainder as u64;
 
-                    if *state >> 32 == 0 {
+                    any_underflows |= *state >> 32 == 0 && buf.len == 0;
+                }
+
+                if any_underflows {
+                    for buf in &mut bufs {
+                        while buf.len != 4 {
+                            buf.buf[((buf.next + buf.len) & 0x03) as usize] =
+                                self.compressed_data[cursor as usize];
+                            cursor += 1;
+                            buf.len += 1;
+                        }
+                    }
+                }
+
+                for buf in &mut bufs {
+                    if buf.state >> 32 == 0 {
                         // Refill the state as soon as we can.
-                        *state = (*state << 32) | self.compressed_data[cursor as usize] as u64;
-                        cursor += 1;
+                        buf.state = (buf.state << 32) | buf.buf[buf.next as usize] as u64;
+                        buf.next = (buf.next + 1) & 0x03;
+                        buf.len -= 1;
                     }
                 }
             }
 
-            for i in 0..subgroup_size {
-                assert_eq!(state[i as usize], 1u64 << 32);
+            for buf in &bufs {
+                assert_eq!(buf.state, 1u64 << 32);
             }
-            assert_eq!(cursor, self.offsets[(subgroup + 1) as usize]);
         }
 
         UncompressedMatrix {
