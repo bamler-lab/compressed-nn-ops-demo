@@ -56,7 +56,7 @@ fn mat_vec_mul(
     var quantile = 4 * local_id.x;
     var cursor = globals.cursor;
     var word = compressed_data[cursor];
-    let grid_spacing = f16bits_to_f32(word & 0xFFFF);
+    let grid_spacing = unpack2x16float(word).x;
     let grid_start = i32(((word >> 16) + 128) & 0xFF) - 128;
     let grid_size = (word >> 24) & 0xFF;
     cursor += 1;
@@ -199,34 +199,5 @@ fn mat_vec_mul(
     let next_pair = subgroupShuffleDown(pair, 2u);
     if (global_id.x % 4 == 0) {
         output_vector[global_id.x / 4] = (next_pair << 16) | pair;
-        // output_vector[global_id.x / 4] = u32(i32(grid_start) + 10000);
     }
-}
-
-// Emulate the conversion from 16-bit float to 32-bit float for platforms that
-// don't support f16 natively. Assumes that the input is neither NaN nor infinity.
-fn f16bits_to_f32(x: u32) -> f32 {
-    let sign = x >> 15;
-    let exponent = (x >> 10) & 0x1F;
-    let mantissa = x & 0x3FF;
-
-    var f32_exponent: u32;
-    var f32_mantissa: u32;
-
-    if (exponent == 0) {
-        if (mantissa == 0) {
-            return 0.0;
-        } else {
-            let leading_zeros = countLeadingZeros(mantissa);
-            f32_exponent = 134 - leading_zeros;
-            f32_mantissa = (mantissa << (leading_zeros - 8)) & 0x007FFFFF;
-        }
-    } else {
-        // Assume that the input is neither NaN nor infinity.
-        f32_exponent = exponent + 112;
-        f32_mantissa = mantissa << 13;
-    };
-
-    let f32_bits = (sign << 31) | (f32_exponent << 23) | f32_mantissa;
-    return bitcast<f32>(f32_bits);
 }

@@ -651,7 +651,7 @@ fn main() -> Result<()> {
             let data = buffer_slice.get_mapped_range();
             let result: &[i8] = bytemuck::cast_slice(&data);
             dbg!(result[0]);
-            println!("Result: {:?}", result);
+            // println!("Result: {:?}", result);
             drop(data);
             download_buffer.unmap();
             let end_time = std::time::Instant::now();
