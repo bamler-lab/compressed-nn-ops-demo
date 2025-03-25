@@ -1,0 +1,47 @@
+# Compressed Matrix-Vector Multiplication in WebGL (using the `wgpu` rust crate)
+
+This directory contains a simple demo that loads a sequence quantized matrices in compressed form on a consumer-grade GPU (e.g., an integrated GPU on a laptop).
+The demo then performs a series of matrix-vector multiplications, where the matrices are decompressed on the fly on in the GPU-kernels.
+This reduces the amount of data that the GPU has to process in a bandwidth-bound operation that mimics the bottleneck in token generation with large language models (LLMs).
+It also allows fitting larger models on consumer-grade GPUs, which typically have relatively little GPU memory.
+
+## How to run
+
+1. Install rust as described here: <https://rustup.rs/>
+2. Clone this repository and `cd` into this directory
+3. Create a file with several compressed matrices (by default: 100 matrices of shape 4096x4096, where the matrix entries are drawn i.i.d. from a quantized Gaussian distribution with standard deviation 4.0; see below for more options):
+
+```bash
+cargo run --bin mk-random --release -- -v testmatrices-compressed.bin
+```
+
+4. Run the series of matrix-vector multiplications on your GPU:
+
+```bash
+cargo run --bin demo --release -- testmatrices-compressed.bin
+```
+
+Here's what the program prints on my laptop (as of commit e68480e from March 25, 2025):
+
+```text
+Total number of matrix elements: 1.68e9
+Reporting mean ± standard error over 10 runs (after discarding 2 runs of warmup) ...
+Including upload:     duration = 506.0 ±  3.8 ms;  throughput =  3.32 ± 0.03 G elements/second
+Not including upload: duration = 102.6 ±  0.3 ms;  throughput = 16.35 ± 0.04 G elements/second
+```
+
+And here's what I get for a simple baseline with uncompressed matrices (by providing the `--uncompressed` switch to both `mk-random` and `demo`):
+
+```text
+Total number of matrix elements: 1.68e9
+Reporting mean ± standard error over 10 runs (after discarding 2 runs of warmup) ...
+Including upload:     duration = 1168.6 ± 42.2 ms;  throughput =  1.45 ± 0.05 G elements/second
+Not including upload: duration = 120.4 ±  2.7 ms;  throughput = 14.00 ± 0.32 G elements/second
+```
+
+So the compressed matrix-vector multiplication is faster on my hardware, especially if you count the time it takes to load the matrices on the GPU (which is relevant for models that don't fit entirely on a consumer GPU and thus have to be uploaded and executed in parts).
+However, keep in mind that these are very early results, and the baseline is very naive (which also explains the low overall throughput).
+
+## More Options
+
+For more command line options, run `cargo run --bin mk-random --release -- --help` or `cargo run --bin demo --release -- --help`.
