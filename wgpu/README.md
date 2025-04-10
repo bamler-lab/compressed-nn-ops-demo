@@ -1,4 +1,4 @@
-# Compressed Matrix-Vector Multiplication in WebGL (using the `wgpu` rust crate)
+# Compressed Matrix-Vector Multiplication in WebGPU (using the `wgpu` rust crate)
 
 This directory contains a simple demo that loads a sequence quantized matrices in compressed form on a consumer-grade GPU (e.g., an integrated GPU on a laptop).
 The demo then performs a series of matrix-vector multiplications, where the matrices are decompressed on the fly on in the GPU-kernels.
