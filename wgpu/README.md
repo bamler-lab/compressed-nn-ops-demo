@@ -1,9 +1,17 @@
 # Compressed Matrix-Vector Multiplication in WebGPU (using the `wgpu` rust crate)
 
-This directory contains a simple demo that loads a sequence quantized matrices in compressed form on a consumer-grade GPU (e.g., an integrated GPU on a laptop).
-The demo then performs a series of matrix-vector multiplications, where the matrices are decompressed on the fly on in the GPU-kernels.
-This reduces the amount of data that the GPU has to process in a bandwidth-bound operation that mimics the bottleneck in token generation with large language models (LLMs).
-It also allows fitting larger models on consumer-grade GPUs, which typically have relatively little GPU memory.
+This directory contains a simple demo that demonstrates how inference in large language models (LLMs) can potentially be accelerated on consumer-grade GPUs by operating directly on a compressed representation of the network.
+For more details, see the [technical motivation in the parent directory](../README.md#technical-details-and-distinction-from-prior-work).
+
+The demo simulates the computational bottleneck of LLM inference by performing a sequence of matrix-vector multiplications (which is the type of operation that dominates LLM inference cost once the prompt has been parsed).
+What's special about our setup here is that we load the matrices on the GPU _in compressed form_, i.e., not only quantized but also entropy coded (think "gzip" but better).
+The GPU kernel (aka shader) decompresses the matrices on the fly while performing the matrix-vector multiplications in such a way that the GPU never has to hold the full uncompressed matrix in memory.
+This reduces the amount of memory that the GPU has to access, and it turns out that this reduced memory access leads to a speedup despite the additional work that the GPU has to do for decompression (LLM inference is heavily _bandwidth bound_).
+
+As an additional advantage, performing AI inference directly on the compressed representation of weight matrices allows fitting larger models on consumer-grade GPUs, which typically have relatively little GPU memory.
+
+**Disclaimer:** this demo is an early proof of concept.
+The tested workload is realistic for LLM inference, but both the proposed compute shader and the baseline can still be considerably improved.
 
 ## How to run
 
