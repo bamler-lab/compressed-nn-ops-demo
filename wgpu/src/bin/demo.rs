@@ -90,19 +90,17 @@ fn main() -> Result<()> {
     required_limits.min_uniform_buffer_offset_alignment =
         adapter.limits().min_uniform_buffer_offset_alignment;
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: None,
-            // TODO: try `PIPELINE_STATISTICS_QUERY` and `TIMESTAMP_QUERY_INSIDE_*`.
-            // TODO: try `MAPPABLE_PRIMARY_BUFFERS` (with caution)
-            required_features: wgpu::Features::SUBGROUP
-                | wgpu::Features::SUBGROUP_BARRIER
-                | wgpu::Features::SHADER_INT64,
-            required_limits,
-            memory_hints: wgpu::MemoryHints::Performance,
-        },
-        None,
-    ))
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: None,
+        // TODO: try `PIPELINE_STATISTICS_QUERY` and `TIMESTAMP_QUERY_INSIDE_*`.
+        // TODO: try `MAPPABLE_PRIMARY_BUFFERS` (with caution)
+        required_features: wgpu::Features::SUBGROUP
+            | wgpu::Features::SUBGROUP_BARRIER
+            | wgpu::Features::SHADER_INT64,
+        required_limits,
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    }))
     .expect("Failed to create device");
 
     info!("Device: {:?}", &device);
@@ -771,7 +769,7 @@ impl<'buf> DownloadVecGuard<'buf> {
 
         // Wait for the GPU to finish working on the submitted work. This doesn't work on WebGPU,
         // so we would need to rely on the callback to know when the buffer is mapped.
-        device.poll(wgpu::Maintain::Wait);
+        device.poll(wgpu::PollType::Wait)?;
         std::mem::replace(&mut *result.lock().unwrap(), Ok(()))?; // Propagate any errors.
 
         // We can now read the data from the buffer.
