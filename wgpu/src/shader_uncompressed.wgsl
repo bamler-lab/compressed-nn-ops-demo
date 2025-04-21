@@ -46,9 +46,7 @@ fn mat_vec_mul(
     let count = globals.input_dim / 4;
     var accumulator = 0i;
     for (var i = 0u; i != count; i += 1u) {
-        let input_vector_entries = unpack4xI8(input_vector_workgroup[i]);
-        let matrix_entries = unpack4xI8(matrix[start + i]);
-        accumulator += dot(matrix_entries, input_vector_entries);
+        accumulator += dot4I8Packed(input_vector_workgroup[i], matrix[start + i]);
     }
 
     let result = u32(i32(round(f32(accumulator) * grid_spacing))) & 0xff;

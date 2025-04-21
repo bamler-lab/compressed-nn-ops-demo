@@ -96,7 +96,7 @@ fn mat_vec_mul(
     var ppf_entry = pack4xU8(vec4(
         left_cdf,
         right_cdf - left_cdf, // `pack4xU8` will truncate this to 8 bits
-        cdf_cursor - 1,
+        cdf_cursor - 1 + u32(grid_start),
         0
     ));
     ppf[quantile] = ppf_entry;
@@ -111,7 +111,7 @@ fn mat_vec_mul(
             ppf_entry = pack4xU8(vec4(
                 left_cdf,
                 right_cdf - left_cdf, // `pack4xU8` will truncate this to 8 bits
-                cdf_cursor - 1,
+                cdf_cursor - 1 + u32(grid_start),
                 0
             ));
         }
@@ -157,19 +157,14 @@ fn mat_vec_mul(
         let ppf_entry2 = unpack4xU8(ppf[quantiles[2]]);
         let ppf_entry3 = unpack4xU8(ppf[quantiles[3]]);
 
-        let matrix_entries = vec4(
-            i32(ppf_entry0[2]) + grid_start,
-            i32(ppf_entry1[2]) + grid_start,
-            i32(ppf_entry2[2]) + grid_start,
-            i32(ppf_entry3[2]) + grid_start,
-        );
+        let matrix_entries = pack4xU8(vec4(ppf_entry0[2], ppf_entry1[2], ppf_entry2[2], ppf_entry3[2]));
+        accumulator += dot4I8Packed(input_vector_workgroup[col], matrix_entries);
 
-        // TODO: This emulates `dot4I8Packed`, which doesn't seem to be available.
-        // Do we need to request some feature to use it?
-        let input_vector_entries = unpack4xI8(input_vector_workgroup[col]);
-        accumulator += dot(matrix_entries, input_vector_entries);
-
-        // TODO: maybe do this as a single 32-bit subtraction.
+        // NOTE: this could be done in a single 32-bit subtraction (see below), but that turns
+        // out to hurt performance as of `wgpu` commit `8594f8f3e`. It looks like the additional
+        // `pack4xU8` and `unpack4xU8` operations outweigh the savings of the SIMD operation.
+        // We should check if we can optimize `pack4xU8` and `unpack4xU8` in `wgpu` similar to how
+        // optimizing `dot4I8Packed` and `dot4U8Packed` in wgpu#7574 improved performance here.
         let remainder0 = quantiles[0] - ppf_entry0[0];
         let remainder1 = quantiles[1] - ppf_entry1[0];
         let remainder2 = quantiles[2] - ppf_entry2[0];
@@ -181,6 +176,16 @@ fn mat_vec_mul(
         full_remainder += remainder2;
         full_remainder *= ppf_entry3[1];
         full_remainder += remainder3;
+
+        // NOTE: below is the SIMD version of the above code, see comment above.
+        // let left_cdfs = pack4xU8(vec4(ppf_entry0[0], ppf_entry1[0], ppf_entry2[0], ppf_entry3[0]));
+        // let remainders = unpack4xU8(lower_state - left_cdfs);
+        // var full_remainder = remainders[0] * ppf_entry1[1];
+        // full_remainder += remainders[1];
+        // full_remainder *= ppf_entry2[1];
+        // full_remainder += remainders[2];
+        // full_remainder *= ppf_entry3[1];
+        // full_remainder += remainders[3];
 
         let full_probability = ppf_entry0[1] * ppf_entry1[1] * ppf_entry2[1] * ppf_entry3[1];
 

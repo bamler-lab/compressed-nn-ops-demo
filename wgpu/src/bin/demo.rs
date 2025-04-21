@@ -32,6 +32,11 @@ struct Cli {
     #[arg(long)]
     uncompressed: bool,
 
+    /// Don't use native instructions for packed integer dot product even if they are available on
+    /// the GPU.
+    #[arg(long = "polyfill-packed-dot")]
+    polyfill_packed_integer_dot_product: bool,
+
     #[command(flatten)]
     verbose: clap_verbosity_flag::Verbosity,
 }
@@ -90,13 +95,16 @@ fn main() -> Result<()> {
     required_limits.min_uniform_buffer_offset_alignment =
         adapter.limits().min_uniform_buffer_offset_alignment;
 
+    let mut required_features =
+        wgpu::Features::SUBGROUP | wgpu::Features::SUBGROUP_BARRIER | wgpu::Features::SHADER_INT64;
+    if !cli.polyfill_packed_integer_dot_product {
+        required_features |= wgpu::Features::NATIVE_PACKED_INTEGER_DOT_PRODUCT;
+    }
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: None,
         // TODO: try `PIPELINE_STATISTICS_QUERY` and `TIMESTAMP_QUERY_INSIDE_*`.
         // TODO: try `MAPPABLE_PRIMARY_BUFFERS` (with caution)
-        required_features: wgpu::Features::SUBGROUP
-            | wgpu::Features::SUBGROUP_BARRIER
-            | wgpu::Features::SHADER_INT64,
+        required_features,
         required_limits,
         memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,
