@@ -22,4 +22,4 @@ probability = "0.20.3"
 rand = "0.9.0"
 rayon = "1.10.0"
 safetensors = "0.5.3"
-wgpu = "25.0.0"
+wgpu = {git = "https://github.com/robamler/wgpu.git", branch = "use-packed-vector-format"}

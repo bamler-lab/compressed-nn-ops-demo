@@ -745,9 +745,8 @@ dependencies = [
 
 [[package]]
 name = "naga"
-version = "25.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b977c445f26e49757f9aca3631c3b8b836942cb278d69a92e7b80d3b24da632"
+version = "25.0.0"
+source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -1360,8 +1359,7 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "25.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca6049eb2014a0e0d8689f9b787605dd71d5bbfdc74095ead499f3cff705c229"
+source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
 dependencies = [
  "arrayvec",
  "bitflags 2.9.0",
@@ -1387,9 +1385,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "25.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a19813e647da7aa3cdaa84f5846e2c64114970ea7c86b1e6aae8be08091f4bdc"
+version = "25.0.0"
+source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -1419,8 +1416,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "25.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfd488b3239b6b7b185c3b045c39ca6bf8af34467a4c5de4e0b1a564135d093d"
+source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
 dependencies = [
  "wgpu-hal",
 ]
@@ -1428,8 +1424,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "25.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09ad7aceb3818e52539acc679f049d3475775586f3f4e311c30165cf2c00445"
+source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
 dependencies = [
  "wgpu-hal",
 ]
@@ -1437,17 +1432,15 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "25.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cba5fb5f7f9c98baa7c889d444f63ace25574833df56f5b817985f641af58e46"
+source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-hal"
-version = "25.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb7c4a1dc42ff14c23c9b11ebf1ee85cde661a9b1cf0392f79c1faca5bc559fb"
+version = "25.0.0"
+source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -1493,8 +1486,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "25.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2aa49460c2a8ee8edba3fca54325540d904dd85b2e086ada762767e17d06e8bc"
+source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
 dependencies = [
  "bitflags 2.9.0",
  "bytemuck",
