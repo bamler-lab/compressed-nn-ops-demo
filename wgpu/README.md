@@ -1,5 +1,13 @@
 # Compressed Matrix-Vector Multiplication in WebGPU (using the `wgpu` rust crate)
 
+<hr>
+
+⚠️ **CAUTION:**
+This repository contains a portable proof of concept to demonstrate a new idea for speeding up LLM inference, *implemented in WebGPU Shading Language (WGSL)*.
+**We are currently working on a more serious implementation in CUDA (based on [CUTLASS](https://github.com/NVIDIA/cutlass)) for NVIDIA-GPUs, which we will publish alongside a corresponding paper once it's ready.**
+
+<hr>
+
 This directory contains a simple demo that demonstrates how inference in large language models (LLMs) can potentially be accelerated on consumer-grade GPUs by operating directly on a compressed representation of the network.
 For more details, see the [technical motivation in the parent directory](../README.md#technical-details-and-distinction-from-prior-work).
 
