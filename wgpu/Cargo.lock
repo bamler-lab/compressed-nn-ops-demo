@@ -120,12 +120,6 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bitflags"
-version = "1.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
-
-[[package]]
-name = "bitflags"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
@@ -300,9 +294,9 @@ dependencies = [
 
 [[package]]
 name = "core-foundation"
-version = "0.9.4"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f"
+checksum = "b55271e5c8c478ad3f38ad24ef34923091e0548492a266d19b3c0b4d82574c63"
 dependencies = [
  "core-foundation-sys",
  "libc",
@@ -316,11 +310,11 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "core-graphics-types"
-version = "0.1.3"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45390e6114f68f718cc7a830514a96f903cccd70d02a8f6d9f643ac4ba45afaf"
+checksum = "3d44a101f213f6c4cdc1853d4b78aef6db6bdfa3468798cc1d9912f4735013eb"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags",
  "core-foundation",
  "libc",
 ]
@@ -498,7 +492,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fbcd2dba93594b227a1f57ee09b8b9da8892c34d55aa332e034a228d0fe6a171"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
  "gpu-alloc-types",
 ]
 
@@ -508,7 +502,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98ff03b468aa837d70984d55f5d3f846f6ec31fe34bbb97c4f85219caeee1ca4"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
 ]
 
 [[package]]
@@ -529,7 +523,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcf29e94d6d243368b7a56caa16bc213e4f9f8ed38c4d9557069527b5d5281ca"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
  "gpu-descriptor-types",
  "hashbrown",
 ]
@@ -540,7 +534,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdf242682df893b86f33a73828fb09ca4b2d3bb6cc95249707fc684d27484b91"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
 ]
 
 [[package]]
@@ -730,11 +724,11 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "metal"
-version = "0.31.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f569fb946490b5743ad69813cb19629130ce9374034abe31614a36402d18f99e"
+checksum = "00c15a6f673ff72ddcc22394663290f870fb224c1bfce55734a75c414150e605"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
  "block",
  "core-graphics-types",
  "foreign-types",
@@ -746,17 +740,19 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "25.0.0"
-source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
+source = "git+https://github.com/gfx-rs/wgpu.git?rev=ff291654b3f6a7cd67c6b1907203c525d262e1b9#ff291654b3f6a7cd67c6b1907203c525d262e1b9"
 dependencies = [
  "arrayvec",
  "bit-set",
- "bitflags 2.9.0",
+ "bitflags",
+ "cfg-if",
  "cfg_aliases",
  "codespan-reporting",
  "half",
  "hashbrown",
  "hexf-parse",
  "indexmap",
+ "libm",
  "log",
  "num-traits",
  "once_cell",
@@ -769,9 +765,9 @@ dependencies = [
 
 [[package]]
 name = "ndk-sys"
-version = "0.5.0+25.2.9519653"
+version = "0.6.0+11769913"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c196769dd60fd4f363e11d948139556a344e79d451aeb2fa2fd040738ef7691"
+checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys",
 ]
@@ -1001,7 +997,7 @@ version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b8c0c260b63a8219631167be35e6a988e9554dbd323f8bd08439c8ed1302bd1"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
 ]
 
 [[package]]
@@ -1135,7 +1131,7 @@ version = "0.3.0+sdk-1.3.268.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eda41003dc44290527a59b13432d4a0379379fa074b70174882adfbdfd917844"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
 ]
 
 [[package]]
@@ -1152,18 +1148,18 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.26.3"
+version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+checksum = "f64def088c51c9510a8579e3c5d67c65349dcf755e5479ad3d010aa6454e2c32"
 dependencies = [
  "strum_macros",
 ]
 
 [[package]]
 name = "strum_macros"
-version = "0.26.4"
+version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+checksum = "c77a8c5abcaf0f9ce05d62342b7d298c346515365c36b673df4ebe3ced01fde8"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1359,10 +1355,10 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "25.0.0"
-source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
+source = "git+https://github.com/gfx-rs/wgpu.git?rev=ff291654b3f6a7cd67c6b1907203c525d262e1b9#ff291654b3f6a7cd67c6b1907203c525d262e1b9"
 dependencies = [
  "arrayvec",
- "bitflags 2.9.0",
+ "bitflags",
  "cfg_aliases",
  "document-features",
  "hashbrown",
@@ -1386,12 +1382,12 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "25.0.0"
-source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
+source = "git+https://github.com/gfx-rs/wgpu.git?rev=ff291654b3f6a7cd67c6b1907203c525d262e1b9#ff291654b3f6a7cd67c6b1907203c525d262e1b9"
 dependencies = [
  "arrayvec",
  "bit-set",
  "bit-vec",
- "bitflags 2.9.0",
+ "bitflags",
  "cfg_aliases",
  "document-features",
  "hashbrown",
@@ -1416,7 +1412,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "25.0.0"
-source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
+source = "git+https://github.com/gfx-rs/wgpu.git?rev=ff291654b3f6a7cd67c6b1907203c525d262e1b9#ff291654b3f6a7cd67c6b1907203c525d262e1b9"
 dependencies = [
  "wgpu-hal",
 ]
@@ -1424,7 +1420,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "25.0.0"
-source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
+source = "git+https://github.com/gfx-rs/wgpu.git?rev=ff291654b3f6a7cd67c6b1907203c525d262e1b9#ff291654b3f6a7cd67c6b1907203c525d262e1b9"
 dependencies = [
  "wgpu-hal",
 ]
@@ -1432,7 +1428,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "25.0.0"
-source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
+source = "git+https://github.com/gfx-rs/wgpu.git?rev=ff291654b3f6a7cd67c6b1907203c525d262e1b9#ff291654b3f6a7cd67c6b1907203c525d262e1b9"
 dependencies = [
  "wgpu-hal",
 ]
@@ -1440,13 +1436,13 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "25.0.0"
-source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
+source = "git+https://github.com/gfx-rs/wgpu.git?rev=ff291654b3f6a7cd67c6b1907203c525d262e1b9#ff291654b3f6a7cd67c6b1907203c525d262e1b9"
 dependencies = [
  "android_system_properties",
  "arrayvec",
  "ash",
  "bit-set",
- "bitflags 2.9.0",
+ "bitflags",
  "block",
  "bytemuck",
  "cfg-if",
@@ -1486,9 +1482,9 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "25.0.0"
-source = "git+https://github.com/robamler/wgpu.git?branch=use-packed-vector-format#8594f8f3e7fcc5ea19b37936fdfa3c47712d6d0a"
+source = "git+https://github.com/gfx-rs/wgpu.git?rev=ff291654b3f6a7cd67c6b1907203c525d262e1b9#ff291654b3f6a7cd67c6b1907203c525d262e1b9"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
  "bytemuck",
  "js-sys",
  "log",
@@ -1648,7 +1644,7 @@ version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f42320e61fe2cfd34354ecb597f86f413484a798ba44a8ca1165c58d42da6c1"
 dependencies = [
- "bitflags 2.9.0",
+ "bitflags",
 ]
 
 [[package]]

@@ -22,4 +22,7 @@ probability = "0.20.3"
 rand = "0.9.0"
 rayon = "1.10.0"
 safetensors = "0.5.3"
-wgpu = {git = "https://github.com/robamler/wgpu.git", branch = "use-packed-vector-format"}
+
+# We fix wgpu to a specific commit for now so that we can use our optimizations in PRs #7494, #7574,
+# #7595, #7653, and #7664. These will be part of wgpu version 26.0, to be released in July 2025.
+wgpu = {git = "https://github.com/gfx-rs/wgpu.git", rev = "ff291654b3f6a7cd67c6b1907203c525d262e1b9"}
